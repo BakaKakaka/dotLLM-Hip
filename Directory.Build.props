@@ -42,4 +42,9 @@
     <None Include="$(MSBuildThisFileDirectory)README.md" Pack="true" PackagePath="\" Condition="Exists('$(MSBuildThisFileDirectory)README.md')" />
     <None Include="$(MSBuildThisFileDirectory)docs\icon.png" Pack="true" PackagePath="\" Condition="Exists('$(MSBuildThisFileDirectory)docs\icon.png')" />
   </ItemGroup>
+
+  <!-- Machine-local overrides, git-ignored (*.user). E.g. on the HIP target machine:
+       <Project><PropertyGroup><DotLLMRequireHip>true</DotLLMRequireHip></PropertyGroup></Project>
+       See docs/HIP.md. -->
+  <Import Project="$(MSBuildThisFileDirectory)Directory.Build.props.user" Condition="Exists('$(MSBuildThisFileDirectory)Directory.Build.props.user')" />
 </Project>

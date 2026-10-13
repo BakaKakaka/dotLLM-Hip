@@ -1,0 +1,190 @@
+<Project>
+  <!--
+    HipKernels.targets - AOT compilation of HIP kernels for DotLLM.Hip (docs/HIP_PLAN.md D7, H0.4).
+
+    Every *.hip file in $(HipKernelDir) is compiled with hipcc - genco once per architecture in
+    $(HipArchs) into $(IntermediateOutputPath)hsaco\<arch>\<name>.hsaco and embedded into the
+    assembly as EmbeddedResource "hsaco/<arch>/<name>.hsaco". A kernels.manifest.json (SHA-256 of
+    every *.hip and *.h, hipcc version, flags, archs) is embedded as "hsaco/kernels.manifest.json".
+    Nothing is written to the source tree.
+
+    Behaviour when the toolchain is missing (e.g. GitHub CI on Linux):
+      DotLLMRequireHip != true -> warning, assembly is built without kernels.
+      DotLLMRequireHip == true -> error. Set it in Directory.Build.props.user on the target machine.
+
+    Consumers may override before importing:
+      HipKernelDir    directory with *.hip / *.h (default: native/hip/kernels)
+      HipArchs        semicolon-separated offload archs (default: gfx1100;gfx1201)
+  -->
+
+  <PropertyGroup>
+    <HipKernelDir Condition="'$(HipKernelDir)' == ''">$(MSBuildThisFileDirectory)kernels</HipKernelDir>
+    <HipArchs Condition="'$(HipArchs)' == ''">gfx1100;gfx1201</HipArchs>
+    <!-- -fno-cuda-host-device-constexpr is mandatory with the VS 2026 STL (W15). -->
+    <HipKernelFlags>--genco -O3 -mno-wavefrontsize64 -std=c++17 -Xclang -fno-cuda-host-device-constexpr</HipKernelFlags>
+    <DotLLMRequireHip Condition="'$(DotLLMRequireHip)' == ''">false</DotLLMRequireHip>
+    <HipRequiredVersionPrefix>7.2.</HipRequiredVersionPrefix>
+  </PropertyGroup>
+
+  <!-- Resolves toolchain + kernel sources. Runs on every build (cheap: no process launches). -->
+  <Target Name="_PrepareHipKernels">
+    <PropertyGroup>
+      <_HipKernelDir>$([MSBuild]::NormalizeDirectory('$(HipKernelDir)'))</_HipKernelDir>
+      <!-- Trailing backslash before a closing quote escapes the quote on the command line (W12). -->
+      <_HipKernelDirArg>$(_HipKernelDir.TrimEnd('\').TrimEnd('/'))</_HipKernelDirArg>
+      <_HipOutputDir>$([MSBuild]::NormalizeDirectory('$(MSBuildProjectDirectory)', '$(IntermediateOutputPath)', 'hsaco'))</_HipOutputDir>
+      <_HipManifestPath>$(_HipOutputDir)kernels.manifest.json</_HipManifestPath>
+      <_HipInputsStampPath>$(_HipOutputDir)kernels.inputs.txt</_HipInputsStampPath>
+      <_HipIsWindows>$([MSBuild]::IsOSPlatform('Windows'))</_HipIsWindows>
+
+      <_HipRoot></_HipRoot>
+      <_HipRoot Condition="'$(HIP_PATH)' != ''">$([MSBuild]::EnsureTrailingSlash('$(HIP_PATH)'))</_HipRoot>
+      <_HipPathIsBin>false</_HipPathIsBin>
+      <_HipPathIsBin Condition="'$(_HipRoot)' != '' And $(_HipRoot.TrimEnd('\').TrimEnd('/').ToLowerInvariant().EndsWith('\bin'))">true</_HipPathIsBin>
+      <_HipccPath>$(_HipRoot)bin\hipcc.exe</_HipccPath>
+      <_HipToolchainFound>false</_HipToolchainFound>
+      <_HipToolchainFound Condition="'$(_HipIsWindows)' == 'true' And '$(_HipRoot)' != '' And Exists('$(_HipccPath)') And Exists('$(_HipRoot)include\hip\hip_runtime.h')">true</_HipToolchainFound>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <HipKernelSource Include="$(_HipKernelDir)*.hip" />
+      <HipKernelHeader Include="$(_HipKernelDir)*.h" />
+      <_HipArch Include="$(HipArchs)" />
+      <!-- Cross product sources x archs: batching over _HipArch includes every source once per arch. -->
+      <_HipKernelUnit Include="@(HipKernelSource)">
+        <Arch>%(_HipArch.Identity)</Arch>
+      </_HipKernelUnit>
+      <_HipKernelUnit>
+        <OutputPath>$(_HipOutputDir)%(Arch)\%(Filename).hsaco</OutputPath>
+        <LogicalName>hsaco/%(Arch)/%(Filename).hsaco</LogicalName>
+      </_HipKernelUnit>
+    </ItemGroup>
+
+    <PropertyGroup>
+      <_HipHasKernels>false</_HipHasKernels>
+      <_HipHasKernels Condition="'@(_HipKernelUnit)' != ''">true</_HipHasKernels>
+      <_HipCanCompile>false</_HipCanCompile>
+      <_HipCanCompile Condition="'$(_HipHasKernels)' == 'true' And '$(_HipToolchainFound)' == 'true' And '$(DesignTimeBuild)' != 'true'">true</_HipCanCompile>
+      <_HipMissingReason Condition="'$(_HipIsWindows)' != 'true'">HIP kernels are only built on Windows (HIP SDK 7.2)</_HipMissingReason>
+      <_HipMissingReason Condition="'$(_HipMissingReason)' == '' And '$(HIP_PATH)' == ''">HIP_PATH is not set (install HIP SDK 7.2.3; restart terminal/IDE afterwards)</_HipMissingReason>
+      <_HipMissingReason Condition="'$(_HipMissingReason)' == '' And '$(_HipPathIsBin)' == 'true'">HIP_PATH points at the bin directory ('$(HIP_PATH)'); it must be the SDK root (W14)</_HipMissingReason>
+      <_HipMissingReason Condition="'$(_HipMissingReason)' == '' And '$(_HipToolchainFound)' != 'true'">'$(_HipccPath)' or '$(_HipRoot)include\hip\hip_runtime.h' not found; HIP_PATH must be the SDK root (W14)</_HipMissingReason>
+    </PropertyGroup>
+
+    <Error Condition="'$(_HipHasKernels)' == 'true' And '$(_HipToolchainFound)' != 'true' And '$(DotLLMRequireHip)' == 'true'"
+           Code="DLLMHIP001"
+           Text="DotLLMRequireHip=true but the HIP toolchain is unavailable: $(_HipMissingReason)." />
+    <Warning Condition="'$(_HipHasKernels)' == 'true' And '$(_HipToolchainFound)' != 'true' And '$(DotLLMRequireHip)' != 'true'"
+             Code="DLLMHIP001"
+             Text="HIP kernels not built: $(_HipMissingReason). $(MSBuildProjectName) is built without kernels and HipDevice.IsAvailable() will report 'kernels not built'." />
+
+    <!-- Stamp of everything that is not a file timestamp: archs, flags, toolchain path and the
+         source list. Rewritten only when different, so adding/removing a kernel or changing a
+         flag invalidates CompileHipKernels. -->
+    <MakeDir Condition="'$(_HipCanCompile)' == 'true'" Directories="$(_HipOutputDir)" />
+    <WriteLinesToFile Condition="'$(_HipCanCompile)' == 'true'"
+                      File="$(_HipInputsStampPath)"
+                      Lines="archs=$(HipArchs.Replace(';', ','));flags=$(HipKernelFlags);hipcc=$(_HipccPath);@(HipKernelSource->'source=%(Filename)%(Extension)');@(HipKernelHeader->'header=%(Filename)%(Extension)')"
+                      Overwrite="true"
+                      WriteOnlyWhenDifferent="true" />
+  </Target>
+
+  <!-- Entry point (H0.4). The work is split so that _CompileHipKernelsCore's Condition is evaluated
+       after _PrepareHipKernels has run (a target's own Condition is evaluated before its
+       DependsOnTargets). -->
+  <Target Name="CompileHipKernels"
+          BeforeTargets="BeforeBuild"
+          DependsOnTargets="_PrepareHipKernels;_CompileHipKernelsCore;_EmbedHipKernels" />
+
+  <!-- Incremental: re-runs when any *.hip, *.h, the flag/source stamp, this file or hipcc changes. -->
+  <Target Name="_CompileHipKernelsCore"
+          Condition="'$(_HipCanCompile)' == 'true'"
+          Inputs="@(HipKernelSource);@(HipKernelHeader);$(_HipInputsStampPath);$(MSBuildThisFileFullPath);$(_HipccPath)"
+          Outputs="@(_HipKernelUnit->'%(OutputPath)');$(_HipManifestPath)">
+
+    <!-- W15: hipcc needs the MSVC STL + Windows SDK even for -genco. Probed only when stale. -->
+    <PropertyGroup>
+      <_HipVsWhere>$(MSBuildProgramFiles32)\Microsoft Visual Studio\Installer\vswhere.exe</_HipVsWhere>
+      <_HipKitsRoot>$([MSBuild]::GetRegistryValueFromView('HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows Kits\Installed Roots', 'KitsRoot10', null, RegistryView.Registry32, RegistryView.Registry64))</_HipKitsRoot>
+      <_HipMsvcPath></_HipMsvcPath>
+    </PropertyGroup>
+    <Exec Condition="Exists('$(_HipVsWhere)')"
+          Command="&quot;$(_HipVsWhere)&quot; -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath"
+          ConsoleToMSBuild="true" IgnoreExitCode="true" StandardOutputImportance="low" StandardErrorImportance="low">
+      <Output TaskParameter="ConsoleOutput" PropertyName="_HipMsvcPath" />
+    </Exec>
+    <ItemGroup>
+      <_HipUcrtHeader Condition="'$(_HipKitsRoot)' != ''" Include="$(_HipKitsRoot)Include\*\ucrt\stdlib.h" />
+    </ItemGroup>
+    <PropertyGroup>
+      <_HipHostToolsReason Condition="'$(_HipMsvcPath)' == ''">MSVC x64 tools not found (install the Visual Studio workload 'Desktop development with C++')</_HipHostToolsReason>
+      <_HipHostToolsReason Condition="'$(_HipHostToolsReason)' == '' And '@(_HipUcrtHeader)' == ''">Windows SDK (ucrt) not found</_HipHostToolsReason>
+    </PropertyGroup>
+    <Error Condition="'$(_HipHostToolsReason)' != '' And '$(DotLLMRequireHip)' == 'true'" Code="DLLMHIP002"
+           Text="HIP kernels cannot be built: $(_HipHostToolsReason) (W15)." />
+    <Warning Condition="'$(_HipHostToolsReason)' != '' And '$(DotLLMRequireHip)' != 'true'" Code="DLLMHIP002"
+             Text="HIP kernels not built: $(_HipHostToolsReason) (W15). $(MSBuildProjectName) is built without kernels." />
+
+    <!-- D4: the SDK version is locked. -->
+    <Exec Condition="'$(_HipHostToolsReason)' == ''" Command="&quot;$(_HipccPath)&quot; --version"
+          ConsoleToMSBuild="true" StandardOutputImportance="low">
+      <Output TaskParameter="ConsoleOutput" ItemName="_HipccVersionOutput" />
+    </Exec>
+    <ItemGroup>
+      <_HipccVersionLine Include="@(_HipccVersionOutput)" Condition="$([System.String]::Copy('%(Identity)').StartsWith('HIP version:'))" />
+    </ItemGroup>
+    <PropertyGroup>
+      <_HipccVersion>@(_HipccVersionLine->'%(Identity)'->Replace('HIP version:', '')->Trim())</_HipccVersion>
+    </PropertyGroup>
+    <Error Condition="'$(_HipHostToolsReason)' == '' And !$(_HipccVersion.StartsWith('$(HipRequiredVersionPrefix)'))" Code="DLLMHIP003"
+           Text="hipcc reports HIP version '$(_HipccVersion)'; HIP SDK $(HipRequiredVersionPrefix)x is required (D4)." />
+
+    <MakeDir Condition="'$(_HipHostToolsReason)' == ''" Directories="@(_HipKernelUnit->'$(_HipOutputDir)%(Arch)')" />
+    <Message Condition="'$(_HipHostToolsReason)' == ''" Importance="high"
+             Text="HIP: %(_HipKernelUnit.Filename)%(_HipKernelUnit.Extension) -> %(_HipKernelUnit.Arch)" />
+    <!-- All paths quoted (W12). '-I' and the directory MUST be separate arguments: hipcc.exe forwards a
+         joined -I"dir with spaces" to clang unquoted. Batches once per (source, arch). -->
+    <Exec Condition="'$(_HipHostToolsReason)' == ''"
+          Command="&quot;$(_HipccPath)&quot; $(HipKernelFlags) --offload-arch=%(_HipKernelUnit.Arch) -I &quot;$(_HipKernelDirArg)&quot; -o &quot;%(_HipKernelUnit.OutputPath)&quot; &quot;%(_HipKernelUnit.FullPath)&quot;"
+          StandardOutputImportance="low" />
+
+    <!-- Manifest (D7): consumed by HipKernelManifestTests to detect source/binary drift. -->
+    <GetFileHash Condition="'$(_HipHostToolsReason)' == ''" Files="@(HipKernelSource);@(HipKernelHeader)" Algorithm="SHA256">
+      <Output TaskParameter="Items" ItemName="_HipHashedSource" />
+    </GetFileHash>
+    <PropertyGroup>
+      <_HipManifestArchs>@(_HipArch->'&quot;%(Identity)&quot;', ', ')</_HipManifestArchs>
+      <_HipManifestFiles>@(_HipHashedSource->'{ &quot;name&quot;: &quot;%(Filename)%(Extension)&quot;, &quot;sha256&quot;: &quot;%(FileHash)&quot; }', ',%0A')</_HipManifestFiles>
+    </PropertyGroup>
+    <ItemGroup>
+      <_HipManifestLine Include="{" />
+      <_HipManifestLine Include="  &quot;schema&quot;: 1," />
+      <_HipManifestLine Include="  &quot;hipccVersion&quot;: &quot;$(_HipccVersion)&quot;," />
+      <_HipManifestLine Include="  &quot;flags&quot;: &quot;$(HipKernelFlags)&quot;," />
+      <_HipManifestLine Include="  &quot;archs&quot;: [ $(_HipManifestArchs) ]," />
+      <_HipManifestLine Include="  &quot;files&quot;: [" />
+      <_HipManifestLine Include="$(_HipManifestFiles)" />
+      <_HipManifestLine Include="  ]" />
+      <_HipManifestLine Include="}" />
+    </ItemGroup>
+    <WriteLinesToFile Condition="'$(_HipHostToolsReason)' == ''" File="$(_HipManifestPath)" Lines="@(_HipManifestLine)" Overwrite="true" />
+  </Target>
+
+  <!-- Always runs (also when _CompileHipKernelsCore is up to date): embeds what exists for the
+       current source set only, so stale .hsaco files of deleted kernels are never embedded. -->
+  <Target Name="_EmbedHipKernels" Condition="'$(_HipHasKernels)' == 'true'">
+    <ItemGroup>
+      <EmbeddedResource Include="@(_HipKernelUnit->'%(OutputPath)')" Condition="Exists('%(OutputPath)')">
+        <LogicalName>%(LogicalName)</LogicalName>
+        <WithCulture>false</WithCulture>
+        <Type>Non-Resx</Type>
+      </EmbeddedResource>
+      <EmbeddedResource Include="$(_HipManifestPath)" Condition="Exists('$(_HipManifestPath)')">
+        <LogicalName>hsaco/kernels.manifest.json</LogicalName>
+        <WithCulture>false</WithCulture>
+        <Type>Non-Resx</Type>
+      </EmbeddedResource>
+    </ItemGroup>
+  </Target>
+
+</Project>

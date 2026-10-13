@@ -425,3 +425,6 @@ FodyWeavers.xsd
 
 # dotLLM test model cache
 tests/.models/
+
+# HIP AOT code objects are build outputs (docs/HIP_PLAN.md D7) - never commit them
+native/hip/**/*.hsaco

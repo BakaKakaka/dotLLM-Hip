@@ -42,6 +42,7 @@ dotLLM/
 │   ├── DotLLM.Tokenizers/             # BPE, SentencePiece, HF parsers, chat templates
 │   ├── DotLLM.Cpu/                    # CPU backend, SIMD kernels
 │   ├── DotLLM.Cuda/                   # CUDA backend, P/Invoke interop
+│   ├── DotLLM.Hip/                    # HIP backend (AMD RDNA3/RDNA4, Windows), see docs/HIP_PLAN.md
 │   ├── DotLLM.Engine/                 # KV-cache, scheduler, samplers, constraints, speculative decoding, prefix cache
 │   ├── DotLLM.Diagnostics/           # Hooks, activation capture, logit lens, SAE
 │   ├── DotLLM.Telemetry/             # Metrics, tracing
@@ -51,7 +52,7 @@ dotLLM/
 │   ├── src/cuda/                      # CUDA kernels
 │   ├── src/cublas/                    # cuBLAS wrappers
 │   ├── src/nccl/                      # Multi-GPU communication
-│   └── hip/                           # ROCm compat (future)
+│   └── hip/                           # HIP kernels (kernels/*.hip) + HipKernels.targets (AOT, embedded)
 ├── tests/
 │   ├── DotLLM.Tests.Unit/
 │   └── DotLLM.Tests.Integration/
@@ -149,6 +150,9 @@ dotLLM/
 | Warm-up | [docs/WARMUP.md](docs/WARMUP.md) | Startup warm-up, JIT compilation, CUDA warm-up |
 | GPU inference | [docs/GPU.md](docs/GPU.md) | GPU forward pass, weight loading, KV-cache, CLI |
 | CUDA backend | [docs/CUDA.md](docs/CUDA.md) | PTX architecture, P/Invoke, kernel conventions, build |
+| HIP backend plan | [docs/HIP_PLAN.md](docs/HIP_PLAN.md) | `DotLLM.Hip` (RX 7900 XTX / RX 9070 XT), work packages, decisions |
+| HIP pitfalls | [docs/HIP_PITFALLS.md](docs/HIP_PITFALLS.md) | **Mandatory** before any HIP/RDNA kernel or interop work |
+| HIP build, test, measurements | [docs/HIP.md](docs/HIP.md) | HIP SDK requirements, `check-hip-env.ps1`, kernel build, spike results (bandwidth reference) |
 | Multi-GPU | [docs/MULTI_GPU.md](docs/MULTI_GPU.md) | Tensor/pipeline parallelism, NCCL |
 | Native AOT deployment | [docs/AOT.md](docs/AOT.md) | AOT publishing, trimming, deployment |
 | Implementation roadmap | [docs/ROADMAP.md](docs/ROADMAP.md) | Planning, task sequencing |

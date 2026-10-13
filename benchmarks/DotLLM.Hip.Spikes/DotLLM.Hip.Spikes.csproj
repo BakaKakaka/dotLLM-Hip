@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- H0.2 / H0.3 spikes (docs/HIP_PLAN.md). Throwaway measurement harness - the results live in docs/HIP.md. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <TieredPGO>true</TieredPGO>
+    <!-- Must be set before the import: compiles Kernels/*.hip instead of native/hip/kernels. -->
+    <HipKernelDir>$(MSBuildThisFileDirectory)Kernels</HipKernelDir>
+  </PropertyGroup>
+
+  <Import Project="..\..\native\hip\HipKernels.targets" />
+
+</Project>

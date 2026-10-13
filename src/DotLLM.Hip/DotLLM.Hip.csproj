@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Description>HIP GPU backend for dotLLM (AMD RDNA3 gfx1100 / RDNA4 gfx1201 on Windows) — AOT-compiled HIP kernels embedded in the assembly, loaded via hipModuleLoadData, with P/Invoke to the HIP SDK 7.2 runtime and rocBLAS.</Description>
+    <PackageTags>$(PackageTags);hip;rocm;amd;rdna</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="DotLLM.Tests.Unit" />
+    <InternalsVisibleTo Include="DotLLM.Tests.Integration" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\DotLLM.Core\DotLLM.Core.csproj" />
+    <ProjectReference Include="..\DotLLM.Cpu\DotLLM.Cpu.csproj" />
+    <ProjectReference Include="..\DotLLM.Engine\DotLLM.Engine.csproj" />
+    <ProjectReference Include="..\DotLLM.Models\DotLLM.Models.csproj" />
+  </ItemGroup>
+
+  <!-- Kernel sources (D3) shown in the IDE; compiled and embedded by HipKernels.targets (D7). -->
+  <ItemGroup>
+    <None Include="..\..\native\hip\kernels\*.hip;..\..\native\hip\kernels\*.h" Link="kernels\%(Filename)%(Extension)" />
+    <None Include="..\..\native\hip\HipKernels.targets" Link="kernels\HipKernels.targets" />
+  </ItemGroup>
+
+  <Import Project="..\..\native\hip\HipKernels.targets" />
+
+</Project>
