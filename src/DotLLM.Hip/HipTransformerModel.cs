@@ -134,35 +134,61 @@ public sealed unsafe class HipTransformerModel : IModel, IGpuModelInfo
         _state.EnsureCapacity(seqLen);
         nint s = _stream.Handle;
 
-        // 1. Pinned async H2D copy of token IDs and positions (H2.5 mandate)
-        var tokenSpan = _state.TokenIdsHost.AsSpan<int>();
-        var posSpan = _state.PositionsHost.AsSpan<int>();
-        tokenIds.CopyTo(tokenSpan[..seqLen]);
-        positions.CopyTo(posSpan[..seqLen]);
-
-        nuint seqIntBytes = (nuint)(seqLen * sizeof(int));
-        HipApi.hipMemcpyAsync(_state.TokenIdsDevice, _state.TokenIdsHost.Pointer, seqIntBytes,
-            HipApi.hipMemcpyHostToDevice, s).ThrowOnError();
-        HipApi.hipMemcpyAsync(_state.PositionsDevice, _state.PositionsHost.Pointer, seqIntBytes,
-            HipApi.hipMemcpyHostToDevice, s).ThrowOnError();
-
-        // 2. Embedding lookup → FP32 residual stream (D5 mandate)
-        switch (_weights.TokenEmbedQuantType)
+        // 1 & 2. Embedding lookup → FP32 residual stream (D5 mandate)
+        if (seqLen == 1)
         {
-            case QuantizationType.F32:
-                _kernels.LaunchEmbeddingF32(_weights.TokenEmbedDevice, _state.TokenIdsDevice, _state.Residual,
-                    seqLen, hiddenSize, s);
-                break;
-            case QuantizationType.F16:
-                _kernels.LaunchEmbeddingF16(_weights.TokenEmbedDevice, _state.TokenIdsDevice, _state.Residual,
-                    seqLen, hiddenSize, s);
-                break;
-            case QuantizationType.Q8_0:
-                _kernels.LaunchEmbeddingQ8_0(_weights.TokenEmbedDevice, _state.TokenIdsDevice, _state.Residual,
-                    seqLen, hiddenSize, s);
-                break;
-            default:
-                throw new NotSupportedException($"Unsupported embedding quant type: {_weights.TokenEmbedQuantType}");
+            // Decode fast path: scalar token ID passed directly as kernel argument,
+            // eliminating DMA submission and driver synchronization overhead.
+            int tokenId = tokenIds[0];
+            switch (_weights.TokenEmbedQuantType)
+            {
+                case QuantizationType.F32:
+                    _kernels.LaunchEmbeddingDecodeF32(_weights.TokenEmbedDevice, tokenId, _state.Residual,
+                        hiddenSize, s);
+                    break;
+                case QuantizationType.F16:
+                    _kernels.LaunchEmbeddingDecodeF16(_weights.TokenEmbedDevice, tokenId, _state.Residual,
+                        hiddenSize, s);
+                    break;
+                case QuantizationType.Q8_0:
+                    _kernels.LaunchEmbeddingDecodeQ8_0(_weights.TokenEmbedDevice, tokenId, _state.Residual,
+                        hiddenSize, s);
+                    break;
+                default:
+                    throw new NotSupportedException($"Unsupported embedding quant type: {_weights.TokenEmbedQuantType}");
+            }
+        }
+        else
+        {
+            // Prefill: Pinned async H2D copy of token IDs and positions (H2.5 mandate)
+            var tokenSpan = _state.TokenIdsHost.AsSpan<int>();
+            var posSpan = _state.PositionsHost.AsSpan<int>();
+            tokenIds.CopyTo(tokenSpan[..seqLen]);
+            positions.CopyTo(posSpan[..seqLen]);
+
+            nuint seqIntBytes = (nuint)(seqLen * sizeof(int));
+            HipApi.hipMemcpyAsync(_state.TokenIdsDevice, _state.TokenIdsHost.Pointer, seqIntBytes,
+                HipApi.hipMemcpyHostToDevice, s).ThrowOnError();
+            HipApi.hipMemcpyAsync(_state.PositionsDevice, _state.PositionsHost.Pointer, seqIntBytes,
+                HipApi.hipMemcpyHostToDevice, s).ThrowOnError();
+
+            switch (_weights.TokenEmbedQuantType)
+            {
+                case QuantizationType.F32:
+                    _kernels.LaunchEmbeddingF32(_weights.TokenEmbedDevice, _state.TokenIdsDevice, _state.Residual,
+                        seqLen, hiddenSize, s);
+                    break;
+                case QuantizationType.F16:
+                    _kernels.LaunchEmbeddingF16(_weights.TokenEmbedDevice, _state.TokenIdsDevice, _state.Residual,
+                        seqLen, hiddenSize, s);
+                    break;
+                case QuantizationType.Q8_0:
+                    _kernels.LaunchEmbeddingQ8_0(_weights.TokenEmbedDevice, _state.TokenIdsDevice, _state.Residual,
+                        seqLen, hiddenSize, s);
+                    break;
+                default:
+                    throw new NotSupportedException($"Unsupported embedding quant type: {_weights.TokenEmbedQuantType}");
+            }
         }
 
         // 3. First layer attention norm (FP32 residual in → FP16 NormOutput)
@@ -185,29 +211,135 @@ public sealed unsafe class HipTransformerModel : IModel, IGpuModelInfo
             ref readonly var lw = ref _weights.Layers[layer];
 
             // ── ATTENTION BLOCK ──
-            Project(lw.QQuant, lw.QQuantType, lw.Q, _state.NormOutput, _state.Q, lw.QOutputDim, lw.QInputDim, seqLen);
-            Project(lw.KQuant, lw.KQuantType, lw.K, _state.NormOutput, _state.K, lw.KOutputDim, lw.KInputDim, seqLen);
-            Project(lw.VQuant, lw.VQuantType, lw.V, _state.NormOutput, _state.V, lw.VOutputDim, lw.VInputDim, seqLen);
+            var qQt = lw.QQuant != 0 ? lw.QQuantType : QuantizationType.F16;
+            var kQt = lw.KQuant != 0 ? lw.KQuantType : QuantizationType.F16;
+            var vQt = lw.VQuant != 0 ? lw.VQuantType : QuantizationType.F16;
 
-            // Optional biases (FP16)
-            if (lw.QBias != 0 && !DebugSkipBias) _kernels.LaunchBiasAddF16(_state.Q, lw.QBias, lw.QOutputDim, seqLen, s);
-            if (lw.KBias != 0 && !DebugSkipBias) _kernels.LaunchBiasAddF16(_state.K, lw.KBias, lw.KOutputDim, seqLen, s);
-            if (lw.VBias != 0 && !DebugSkipBias) _kernels.LaunchBiasAddF16(_state.V, lw.VBias, lw.VOutputDim, seqLen, s);
+            bool canFuseQkv = seqLen == 1
+                && qQt == kQt && qQt == vQt
+                && HipKernels.HasFusedQkvGemv(qQt)
+                && (lw.QQuant != 0 || lw.Q != 0)
+                && (lw.KQuant != 0 || lw.K != 0)
+                && (lw.VQuant != 0 || lw.V != 0);
+
+            bool canFuseQk = seqLen == 1
+                && !canFuseQkv
+                && qQt == kQt
+                && HipKernels.HasFusedQkvGemv(qQt)
+                && (lw.QQuant != 0 || lw.Q != 0)
+                && (lw.KQuant != 0 || lw.K != 0);
+
+            nint kDest = _state.K;
+            nint vDest = _state.V;
+            bool directKv = kvCache is HipKvCache && seqLen == 1;
+            if (directKv)
+            {
+                var hk = (HipKvCache)kvCache!;
+                kDest = hk.GetKeysWritePtr(layer, positions[0]);
+                vDest = hk.GetValuesWritePtr(layer, positions[0]);
+            }
+
+            if (canFuseQkv)
+            {
+                nint qw = lw.QQuant != 0 ? lw.QQuant : lw.Q;
+                nint kw = lw.KQuant != 0 ? lw.KQuant : lw.K;
+                nint vw = lw.VQuant != 0 ? lw.VQuant : lw.V;
+                nint qb = DebugSkipBias ? 0 : lw.QBias;
+                nint kb = DebugSkipBias ? 0 : lw.KBias;
+                nint vb = DebugSkipBias ? 0 : lw.VBias;
+
+                if (HipKernels.HasFusedQkvGemvMmvq(qQt) && lw.QQuant != 0)
+                {
+                    _kernels.LaunchQuantizeQ8_1F16(_state.NormOutput, _state.Q8_1Scratch, lw.QInputDim, s);
+                    _kernels.LaunchFusedQkvGemvMmvq(
+                        qw, kw, vw, qQt,
+                        qb, kb, vb,
+                        _state.Q8_1Scratch, _state.Q, kDest, vDest,
+                        lw.QOutputDim, lw.KOutputDim, lw.VOutputDim, lw.QInputDim, s);
+                }
+                else
+                {
+                    _kernels.LaunchFusedQkvGemv(
+                        qw, kw, vw, qQt,
+                        qb, kb, vb,
+                        _state.NormOutput, _state.Q, kDest, vDest,
+                        lw.QOutputDim, lw.KOutputDim, lw.VOutputDim, lw.QInputDim, s);
+                }
+            }
+            else if (canFuseQk)
+            {
+                nint qw = lw.QQuant != 0 ? lw.QQuant : lw.Q;
+                nint kw = lw.KQuant != 0 ? lw.KQuant : lw.K;
+                nint qb = DebugSkipBias ? 0 : lw.QBias;
+                nint kb = DebugSkipBias ? 0 : lw.KBias;
+
+                if (HipKernels.HasFusedQkvGemvMmvq(qQt) && lw.QQuant != 0)
+                {
+                    _kernels.LaunchQuantizeQ8_1F16(_state.NormOutput, _state.Q8_1Scratch, lw.QInputDim, s);
+                    _kernels.LaunchFusedQkvGemvMmvq(
+                        qw, kw, 0, qQt,
+                        qb, kb, 0,
+                        _state.Q8_1Scratch, _state.Q, kDest, 0,
+                        lw.QOutputDim, lw.KOutputDim, 0, lw.QInputDim, s);
+                }
+                else
+                {
+                    _kernels.LaunchFusedQkvGemv(
+                        qw, kw, 0, qQt,
+                        qb, kb, 0,
+                        _state.NormOutput, _state.Q, kDest, 0,
+                        lw.QOutputDim, lw.KOutputDim, 0, lw.QInputDim, s);
+                }
+
+                Project(lw.VQuant, lw.VQuantType, lw.V, _state.NormOutput, vDest, lw.VOutputDim, lw.VInputDim, seqLen);
+                if (lw.VBias != 0 && !DebugSkipBias) _kernels.LaunchBiasAddF16(vDest, lw.VBias, lw.VOutputDim, seqLen, s);
+            }
+            else
+            {
+                Project(lw.QQuant, lw.QQuantType, lw.Q, _state.NormOutput, _state.Q, lw.QOutputDim, lw.QInputDim, seqLen);
+                Project(lw.KQuant, lw.KQuantType, lw.K, _state.NormOutput, kDest, lw.KOutputDim, lw.KInputDim, seqLen);
+                Project(lw.VQuant, lw.VQuantType, lw.V, _state.NormOutput, vDest, lw.VOutputDim, lw.VInputDim, seqLen);
+
+                // Optional biases (FP16)
+                if (lw.QBias != 0 && !DebugSkipBias) _kernels.LaunchBiasAddF16(_state.Q, lw.QBias, lw.QOutputDim, seqLen, s);
+                if (lw.KBias != 0 && !DebugSkipBias) _kernels.LaunchBiasAddF16(kDest, lw.KBias, lw.KOutputDim, seqLen, s);
+                if (lw.VBias != 0 && !DebugSkipBias) _kernels.LaunchBiasAddF16(vDest, lw.VBias, lw.VOutputDim, seqLen, s);
+            }
 
             // Optional QK-norms (FP16)
             if (lw.QNormWeight != 0)
                 _kernels.LaunchPerHeadRmsNormF16(_state.Q, lw.QNormWeight, eps, numHeads, headDim, seqLen, s);
             if (lw.KNormWeight != 0)
-                _kernels.LaunchPerHeadRmsNormF16(_state.K, lw.KNormWeight, eps, numKvHeads, headDim, seqLen, s);
+                _kernels.LaunchPerHeadRmsNormF16(kDest, lw.KNormWeight, eps, numKvHeads, headDim, seqLen, s);
 
             // RoPE (FP16, in-place on Q and K)
             int effectiveRopeType = DebugRopeTypeOverride >= 0 ? DebugRopeTypeOverride : _ropeType;
-            _kernels.LaunchRoPEF16(_state.Q, _state.K, _state.PositionsDevice,
-                seqLen, numHeads, numKvHeads, headDim,
-                _ropeDim, _ropeTheta, effectiveRopeType, s);
+            if (seqLen == 1)
+            {
+                _kernels.LaunchRoPEDecodeF16(_state.Q, kDest, positions[0],
+                    numHeads, numKvHeads, headDim,
+                    _ropeDim, _ropeTheta, effectiveRopeType, s);
+            }
+            else
+            {
+                _kernels.LaunchRoPEF16(_state.Q, kDest, _state.PositionsDevice,
+                    seqLen, numHeads, numKvHeads, headDim,
+                    _ropeDim, _ropeTheta, effectiveRopeType, s);
+            }
 
             // KV-cache update + Attention
-            if (kvCache is HipKvCache hipKvCache)
+            if (directKv)
+            {
+                var hk = (HipKvCache)kvCache!;
+                hk.AdvancePosition(positions[0]);
+                int seqKv = hk.CurrentLength;
+
+                _kernels.LaunchAttention(_state.Q, hk.GetKeysPtr(layer),
+                    hk.GetValuesPtr(layer), _state.AttnOutput,
+                    seqLen, seqKv, numHeads, numKvHeads, headDim,
+                    positions[0], slidingWindow, s);
+            }
+            else if (kvCache is HipKvCache hipKvCache)
             {
                 hipKvCache.UpdateDevice(_state.K, _state.V, positions, seqLen, layer, s);
                 int seqKv = hipKvCache.CurrentLength;
@@ -233,15 +365,52 @@ public sealed unsafe class HipTransformerModel : IModel, IGpuModelInfo
                 hiddenSize, eps, seqLen, s);
 
             // ── FFN BLOCK ──
-            Project(lw.GateQuant, lw.GateQuantType, lw.Gate, _state.NormOutput, _state.FfnGate, lw.GateOutputDim, lw.GateInputDim, seqLen);
-            Project(lw.UpQuant, lw.UpQuantType, lw.Up, _state.NormOutput, _state.FfnUp, lw.UpOutputDim, lw.UpInputDim, seqLen);
+            var gateQt = lw.GateQuant != 0 ? lw.GateQuantType : QuantizationType.F16;
+            var upQt = lw.UpQuant != 0 ? lw.UpQuantType : QuantizationType.F16;
 
-            if (lw.GateBias != 0) _kernels.LaunchBiasAddF16(_state.FfnGate, lw.GateBias, lw.GateOutputDim, seqLen, s);
-            if (lw.UpBias != 0) _kernels.LaunchBiasAddF16(_state.FfnUp, lw.UpBias, lw.UpOutputDim, seqLen, s);
+            bool canFuseGateUpSwiglu = seqLen == 1
+                && gateQt == upQt
+                && HipKernels.HasFusedGateUpSwiglu(gateQt)
+                && (lw.GateQuant != 0 || lw.Gate != 0)
+                && (lw.UpQuant != 0 || lw.Up != 0);
 
-            // SwiGLU (FP16)
-            _kernels.LaunchSwiGLUF16(_state.FfnGate, _state.FfnUp, _state.SiluOutput,
-                intermediateSize, seqLen, s);
+            if (canFuseGateUpSwiglu)
+            {
+                nint gw = lw.GateQuant != 0 ? lw.GateQuant : lw.Gate;
+                nint uw = lw.UpQuant != 0 ? lw.UpQuant : lw.Up;
+                nint gb = DebugSkipBias ? 0 : lw.GateBias;
+                nint ub = DebugSkipBias ? 0 : lw.UpBias;
+
+                if (HipKernels.HasFusedGateUpSwigluMmvq(gateQt) && lw.GateQuant != 0)
+                {
+                    _kernels.LaunchQuantizeQ8_1F16(_state.NormOutput, _state.Q8_1Scratch, lw.GateInputDim, s);
+                    _kernels.LaunchFusedGateUpSwigluMmvq(
+                        gw, uw, gateQt,
+                        gb, ub,
+                        _state.Q8_1Scratch, _state.SiluOutput,
+                        intermediateSize, lw.GateInputDim, s);
+                }
+                else
+                {
+                    _kernels.LaunchFusedGateUpSwiglu(
+                        gw, uw, gateQt,
+                        gb, ub,
+                        _state.NormOutput, _state.SiluOutput,
+                        intermediateSize, lw.GateInputDim, s);
+                }
+            }
+            else
+            {
+                Project(lw.GateQuant, lw.GateQuantType, lw.Gate, _state.NormOutput, _state.FfnGate, lw.GateOutputDim, lw.GateInputDim, seqLen);
+                Project(lw.UpQuant, lw.UpQuantType, lw.Up, _state.NormOutput, _state.FfnUp, lw.UpOutputDim, lw.UpInputDim, seqLen);
+
+                if (lw.GateBias != 0 && !DebugSkipBias) _kernels.LaunchBiasAddF16(_state.FfnGate, lw.GateBias, lw.GateOutputDim, seqLen, s);
+                if (lw.UpBias != 0 && !DebugSkipBias) _kernels.LaunchBiasAddF16(_state.FfnUp, lw.UpBias, lw.UpOutputDim, seqLen, s);
+
+                // SwiGLU (FP16)
+                _kernels.LaunchSwiGLUF16(_state.FfnGate, _state.FfnUp, _state.SiluOutput,
+                    intermediateSize, seqLen, s);
+            }
 
             // Down projection → NormOutput
             Project(lw.DownQuant, lw.DownQuantType, lw.Down, _state.SiluOutput, _state.NormOutput, lw.DownOutputDim, lw.DownInputDim, seqLen);
@@ -267,11 +436,20 @@ public sealed unsafe class HipTransformerModel : IModel, IGpuModelInfo
         _kernels.LaunchRmsNormF32InF16OutW16(lastResidual, _weights.OutputNormWeight, _state.NormOutput,
             hiddenSize, eps, 1, s);
 
-        // 6. LM head (last token only) → FP16 logits, then convert to FP32
-        Project(_weights.OutputWeightQuant, _weights.OutputQuantType, _weights.OutputWeight,
-            _state.NormOutput, _state.LogitsF16,
-            _weights.OutputOutputDim, _weights.OutputInputDim, 1);
-        _kernels.LaunchConvertF16ToF32(_state.LogitsF16, _state.LogitsF32, vocabSize, s);
+        // 6. LM head (last token only)
+        if (seqLen == 1 && _weights.OutputWeightQuant != 0 && HipKernels.HasQuantizedGemvF32Out(_weights.OutputQuantType))
+        {
+            // Direct FP32 output: eliminates LaunchConvertF16ToF32 and preserves full dot-product precision
+            _kernels.LaunchQuantizedGemvF32Out(_weights.OutputWeightQuant, _weights.OutputQuantType,
+                _state.NormOutput, _state.LogitsF32, vocabSize, hiddenSize, s);
+        }
+        else
+        {
+            Project(_weights.OutputWeightQuant, _weights.OutputQuantType, _weights.OutputWeight,
+                _state.NormOutput, _state.LogitsF16,
+                _weights.OutputOutputDim, _weights.OutputInputDim, 1, preferMmvq: seqLen == 1);
+            _kernels.LaunchConvertF16ToF32(_state.LogitsF16, _state.LogitsF32, vocabSize, s);
+        }
 
         // 7. Async D2H copy of FP32 logits to pinned host buffer (H2.5 mandate)
         nuint logitsBytes = (nuint)(vocabSize * sizeof(float));
@@ -281,19 +459,15 @@ public sealed unsafe class HipTransformerModel : IModel, IGpuModelInfo
         // 8. Stream synchronize (single sync point per forward pass)
         _stream.Synchronize();
 
-        // 9. Copy from pinned host buffer to returned UnmanagedTensor
-        var shape = new TensorShape(1, vocabSize);
-        var result = UnmanagedTensor.Allocate(shape, DType.Float32, deviceId: -1);
-        Buffer.MemoryCopy((void*)_state.LogitsHost.Pointer, (void*)result.DataPointer, (long)logitsBytes, (long)logitsBytes);
-
-        return result;
+        // 9. Zero-copy return of pre-allocated non-owning tensor view
+        return _state.LogitsTensor;
     }
 
     /// <summary>
     /// Dispatches projection as rocBLAS HGEMM (prefill) or quantized/rocBLAS GEMV (decode).
     /// </summary>
     private void Project(nint quantWeight, QuantizationType qt, nint fp16Weight,
-                         nint input, nint output, int outputDim, int inputDim, int seqLen)
+                         nint input, nint output, int outputDim, int inputDim, int seqLen, bool preferMmvq = true)
     {
         nint s = _stream.Handle;
 
@@ -309,7 +483,17 @@ public sealed unsafe class HipTransformerModel : IModel, IGpuModelInfo
             }
             HipGemm.LinearF16(_rocblas.Handle, input, w, output, seqLen, inputDim, outputDim, s);
         }
-        else if (quantWeight != 0 && HipKernels.HasQuantizedGemv(qt)) // Decode: quantized GEMV
+        else if (quantWeight != 0 && preferMmvq && HipKernels.HasMmvqGemv(qt)) // Decode: vectorized MMVQ GEMV (H3.2)
+        {
+            _kernels.LaunchQuantizeQ8_1F16(input, _state.Q8_1Scratch, inputDim, s);
+            if (qt == QuantizationType.Q8_0)
+                _kernels.LaunchMmvqGemvQ8_0(quantWeight, _state.Q8_1Scratch, output, outputDim, inputDim, s);
+            else if (qt == QuantizationType.Q4_K)
+                _kernels.LaunchMmvqGemvQ4_K(quantWeight, _state.Q8_1Scratch, output, outputDim, inputDim, s);
+            else if (qt == QuantizationType.Q6_K)
+                _kernels.LaunchMmvqGemvQ6_K(quantWeight, _state.Q8_1Scratch, output, outputDim, inputDim, s);
+        }
+        else if (quantWeight != 0 && HipKernels.HasQuantizedGemv(qt)) // Decode: fallback quantized GEMV
         {
             _kernels.LaunchQuantizedGemv(quantWeight, qt, input, output, outputDim, inputDim, s);
         }

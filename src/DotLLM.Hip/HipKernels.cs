@@ -25,11 +25,18 @@ public sealed unsafe class HipKernels : IDisposable
     private readonly HipModule _dequantModule;
     private readonly HipModule _quantizedGemvModule;
     private readonly HipModule _attentionModule;
+    private readonly HipModule _fusedGateUpSwigluModule;
+    private readonly HipModule _fusedQkvGemvModule;
+    private readonly HipModule _quantizeQ8_1Module;
+    private readonly HipModule _mmvqModule;
 
     // Embedding functions
     private readonly nint _embeddingF32F32OutFunc;
     private readonly nint _embeddingF16F32OutFunc;
     private readonly nint _embeddingQ8_0F32OutFunc;
+    private readonly nint _embeddingF32DecodeF32OutFunc;
+    private readonly nint _embeddingF16DecodeF32OutFunc;
+    private readonly nint _embeddingQ8_0DecodeF32OutFunc;
 
     // RMSNorm functions
     private readonly nint _rmsnormF32InF16OutFunc;
@@ -48,6 +55,7 @@ public sealed unsafe class HipKernels : IDisposable
 
     // RoPE
     private readonly nint _ropeF16Func;
+    private readonly nint _ropeDecodeF16Func;
     private readonly nint _ropeF32Func;
 
     // SwiGLU
@@ -86,10 +94,46 @@ public sealed unsafe class HipKernels : IDisposable
     private readonly nint _quantizedGemvQ4_KFunc;
     private readonly nint _quantizedGemvQ5_KFunc;
     private readonly nint _quantizedGemvQ6_KFunc;
+    private readonly nint _quantizedGemvQ8_0F32OutFunc;
+    private readonly nint _quantizedGemvQ4_KF32OutFunc;
+    private readonly nint _quantizedGemvQ6_KF32OutFunc;
 
     // Attention
     private readonly nint _attentionF16Func;
+    private readonly nint _attentionDecodeF16Func;
     private readonly nint _attentionF32Func;
+
+    // Fused Gate + Up + SwiGLU
+    private readonly nint _fusedGateUpSwigluQ8_0Func;
+    private readonly nint _fusedGateUpSwigluQ4_0Func;
+    private readonly nint _fusedGateUpSwigluQ5_0Func;
+    private readonly nint _fusedGateUpSwigluQ4_KFunc;
+    private readonly nint _fusedGateUpSwigluQ5_KFunc;
+    private readonly nint _fusedGateUpSwigluQ6_KFunc;
+    private readonly nint _fusedGateUpSwigluF16Func;
+    private readonly nint _fusedGateUpSwigluMmvqQ8_0Func;
+    private readonly nint _fusedGateUpSwigluMmvqQ4_KFunc;
+
+    // Fused QKV GEMV
+    private readonly nint _fusedQkvGemvQ8_0Func;
+    private readonly nint _fusedQkvGemvQ4_0Func;
+    private readonly nint _fusedQkvGemvQ5_0Func;
+    private readonly nint _fusedQkvGemvQ4_KFunc;
+    private readonly nint _fusedQkvGemvQ5_KFunc;
+    private readonly nint _fusedQkvGemvQ6_KFunc;
+    private readonly nint _fusedQkvGemvF16Func;
+    private readonly nint _fusedQkvGemvMmvqQ8_0Func;
+    private readonly nint _fusedQkvGemvMmvqQ4_KFunc;
+
+    // Quantize Q8_1
+    private readonly nint _quantizeQ8_1F16Func;
+    private readonly nint _quantizeQ8_1F32Func;
+
+    // MMVQ GEMV
+    private readonly nint _mmvqGemvQ8_0Func;
+    private readonly nint _mmvqGemvQ8_0Fdot2Func;
+    private readonly nint _mmvqGemvQ4_KFunc;
+    private readonly nint _mmvqGemvQ6_KFunc;
 
     private bool _disposed;
 
@@ -116,6 +160,9 @@ public sealed unsafe class HipKernels : IDisposable
         _embeddingF32F32OutFunc = _embeddingModule.GetFunction("embedding_lookup_f32_f32out");
         _embeddingF16F32OutFunc = _embeddingModule.GetFunction("embedding_lookup_f16_f32out");
         _embeddingQ8_0F32OutFunc = _embeddingModule.GetFunction("embedding_lookup_q8_0_f32out");
+        _embeddingF32DecodeF32OutFunc = _embeddingModule.GetFunction("embedding_lookup_f32_decode_f32out");
+        _embeddingF16DecodeF32OutFunc = _embeddingModule.GetFunction("embedding_lookup_f16_decode_f32out");
+        _embeddingQ8_0DecodeF32OutFunc = _embeddingModule.GetFunction("embedding_lookup_q8_0_decode_f32out");
 
         _rmsnormF32InF16OutFunc = _rmsnormModule.GetFunction("rmsnorm_f32in_f16out");
         _rmsnormF32InF16OutW16Func = _rmsnormModule.GetFunction("rmsnorm_f32in_f16out_w16");
@@ -130,6 +177,7 @@ public sealed unsafe class HipKernels : IDisposable
         _perHeadRmsNormF32Func = _perHeadRmsNormModule.GetFunction("per_head_rmsnorm_f32");
 
         _ropeF16Func = _ropeModule.GetFunction("rope_f16");
+        _ropeDecodeF16Func = _ropeModule.GetFunction("rope_decode_f16");
         _ropeF32Func = _ropeModule.GetFunction("rope_f32");
 
         _swigluF16Func = _swigluModule.GetFunction("swiglu_f16");
@@ -161,9 +209,46 @@ public sealed unsafe class HipKernels : IDisposable
         _quantizedGemvQ4_KFunc = _quantizedGemvModule.GetFunction("quantized_gemv_q4_k");
         _quantizedGemvQ5_KFunc = _quantizedGemvModule.GetFunction("quantized_gemv_q5_k");
         _quantizedGemvQ6_KFunc = _quantizedGemvModule.GetFunction("quantized_gemv_q6_k");
+        _quantizedGemvQ8_0F32OutFunc = _quantizedGemvModule.GetFunction("quantized_gemv_q8_0_f32out");
+        _quantizedGemvQ4_KF32OutFunc = _quantizedGemvModule.GetFunction("quantized_gemv_q4_k_f32out");
+        _quantizedGemvQ6_KF32OutFunc = _quantizedGemvModule.GetFunction("quantized_gemv_q6_k_f32out");
 
         _attentionF16Func = _attentionModule.GetFunction("attention_f16");
+        _attentionDecodeF16Func = _attentionModule.GetFunction("attention_decode_f16");
         _attentionF32Func = _attentionModule.GetFunction("attention_f32");
+
+        _fusedGateUpSwigluModule = HipKernelLoader.LoadEmbeddedModule(arch, "fused_gate_up_swiglu");
+        _fusedQkvGemvModule = HipKernelLoader.LoadEmbeddedModule(arch, "fused_qkv_gemv");
+        _quantizeQ8_1Module = HipKernelLoader.LoadEmbeddedModule(arch, "quantize_q8_1");
+        _mmvqModule = HipKernelLoader.LoadEmbeddedModule(arch, "mmvq");
+
+        _fusedGateUpSwigluQ8_0Func = _fusedGateUpSwigluModule.GetFunction("fused_gate_up_swiglu_q8_0");
+        _fusedGateUpSwigluQ4_0Func = _fusedGateUpSwigluModule.GetFunction("fused_gate_up_swiglu_q4_0");
+        _fusedGateUpSwigluQ5_0Func = _fusedGateUpSwigluModule.GetFunction("fused_gate_up_swiglu_q5_0");
+        _fusedGateUpSwigluQ4_KFunc = _fusedGateUpSwigluModule.GetFunction("fused_gate_up_swiglu_q4_k");
+        _fusedGateUpSwigluQ5_KFunc = _fusedGateUpSwigluModule.GetFunction("fused_gate_up_swiglu_q5_k");
+        _fusedGateUpSwigluQ6_KFunc = _fusedGateUpSwigluModule.GetFunction("fused_gate_up_swiglu_q6_k");
+        _fusedGateUpSwigluF16Func = _fusedGateUpSwigluModule.GetFunction("fused_gate_up_swiglu_f16");
+        _fusedGateUpSwigluMmvqQ8_0Func = _fusedGateUpSwigluModule.GetFunction("fused_gate_up_swiglu_mmvq_q8_0");
+        _fusedGateUpSwigluMmvqQ4_KFunc = _fusedGateUpSwigluModule.GetFunction("fused_gate_up_swiglu_mmvq_q4_k");
+
+        _fusedQkvGemvQ8_0Func = _fusedQkvGemvModule.GetFunction("fused_qkv_gemv_q8_0");
+        _fusedQkvGemvQ4_0Func = _fusedQkvGemvModule.GetFunction("fused_qkv_gemv_q4_0");
+        _fusedQkvGemvQ5_0Func = _fusedQkvGemvModule.GetFunction("fused_qkv_gemv_q5_0");
+        _fusedQkvGemvQ4_KFunc = _fusedQkvGemvModule.GetFunction("fused_qkv_gemv_q4_k");
+        _fusedQkvGemvQ5_KFunc = _fusedQkvGemvModule.GetFunction("fused_qkv_gemv_q5_k");
+        _fusedQkvGemvQ6_KFunc = _fusedQkvGemvModule.GetFunction("fused_qkv_gemv_q6_k");
+        _fusedQkvGemvF16Func = _fusedQkvGemvModule.GetFunction("fused_qkv_gemv_f16");
+        _fusedQkvGemvMmvqQ8_0Func = _fusedQkvGemvModule.GetFunction("fused_qkv_gemv_mmvq_q8_0");
+        _fusedQkvGemvMmvqQ4_KFunc = _fusedQkvGemvModule.GetFunction("fused_qkv_gemv_mmvq_q4_k");
+
+        _quantizeQ8_1F16Func = _quantizeQ8_1Module.GetFunction("quantize_q8_1_f16");
+        _quantizeQ8_1F32Func = _quantizeQ8_1Module.GetFunction("quantize_q8_1_f32");
+
+        _mmvqGemvQ8_0Func = _mmvqModule.GetFunction("mmvq_gemv_q8_0");
+        _mmvqGemvQ8_0Fdot2Func = _mmvqModule.GetFunction("mmvq_gemv_q8_0_fdot2");
+        _mmvqGemvQ4_KFunc = _mmvqModule.GetFunction("mmvq_gemv_q4_k");
+        _mmvqGemvQ6_KFunc = _mmvqModule.GetFunction("mmvq_gemv_q6_k");
     }
 
     // ─────────────────────── Embedding ───────────────────────
@@ -199,6 +284,39 @@ public sealed unsafe class HipKernels : IDisposable
         void** args = stackalloc void*[] { &eArg, &tArg, &oArg, &sArg, &hArg };
         HipApi.hipModuleLaunchKernel(_embeddingQ8_0F32OutFunc,
             (uint)seqLen, 1, 1, BlockSize, 1, 1, 0, stream, args, null).ThrowOnError();
+    }
+
+    /// <summary>Embedding lookup for decode (scalar token_id) with FP32 table and FP32 output.</summary>
+    public void LaunchEmbeddingDecodeF32(nint embedTable, int tokenId, nint output,
+                                         int hiddenSize, nint stream)
+    {
+        nint eArg = embedTable, oArg = output;
+        int tArg = tokenId, hArg = hiddenSize;
+        void** args = stackalloc void*[] { &eArg, &tArg, &oArg, &hArg };
+        HipApi.hipModuleLaunchKernel(_embeddingF32DecodeF32OutFunc,
+            1, 1, 1, BlockSize, 1, 1, 0, stream, args, null).ThrowOnError();
+    }
+
+    /// <summary>Embedding lookup for decode (scalar token_id) with FP16 table and FP32 output.</summary>
+    public void LaunchEmbeddingDecodeF16(nint embedTable, int tokenId, nint output,
+                                         int hiddenSize, nint stream)
+    {
+        nint eArg = embedTable, oArg = output;
+        int tArg = tokenId, hArg = hiddenSize;
+        void** args = stackalloc void*[] { &eArg, &tArg, &oArg, &hArg };
+        HipApi.hipModuleLaunchKernel(_embeddingF16DecodeF32OutFunc,
+            1, 1, 1, BlockSize, 1, 1, 0, stream, args, null).ThrowOnError();
+    }
+
+    /// <summary>Embedding lookup for decode (scalar token_id) with Q8_0 table and FP32 output.</summary>
+    public void LaunchEmbeddingDecodeQ8_0(nint embedTable, int tokenId, nint output,
+                                          int hiddenSize, nint stream)
+    {
+        nint eArg = embedTable, oArg = output;
+        int tArg = tokenId, hArg = hiddenSize;
+        void** args = stackalloc void*[] { &eArg, &tArg, &oArg, &hArg };
+        HipApi.hipModuleLaunchKernel(_embeddingQ8_0DecodeF32OutFunc,
+            1, 1, 1, BlockSize, 1, 1, 0, stream, args, null).ThrowOnError();
     }
 
     // ─────────────────────── RMSNorm ───────────────────────
@@ -339,6 +457,29 @@ public sealed unsafe class HipKernels : IDisposable
         uint blocks = (uint)((totalPairs + BlockSize - 1) / BlockSize);
 
         HipApi.hipModuleLaunchKernel(_ropeF16Func,
+            blocks, 1, 1, BlockSize, 1, 1, 0, stream, args, null).ThrowOnError();
+    }
+
+    /// <summary>Rotary position embedding (RoPE) in FP16 for decode (scalar pos).</summary>
+    public void LaunchRoPEDecodeF16(nint q, nint k, int position,
+                                    int numHeads, int numKvHeads, int headDim, int ropeDim,
+                                    float theta, int ropeType, nint stream)
+    {
+        nint qArg = q, kArg = k;
+        int pArg = position, nhArg = numHeads, nkvArg = numKvHeads, hdArg = headDim, rdArg = ropeDim;
+        float thArg = theta;
+        int rtArg = ropeType;
+        void** args = stackalloc void*[]
+        {
+            &qArg, &kArg, &pArg, &nhArg, &nkvArg, &hdArg, &rdArg, &thArg, &rtArg
+        };
+
+        int maxHeads = Math.Max(numHeads, numKvHeads);
+        int halfRope = ropeDim / 2;
+        int totalPairs = maxHeads * halfRope;
+        uint blocks = (uint)((totalPairs + BlockSize - 1) / BlockSize);
+
+        HipApi.hipModuleLaunchKernel(_ropeDecodeF16Func,
             blocks, 1, 1, BlockSize, 1, 1, 0, stream, args, null).ThrowOnError();
     }
 
@@ -592,6 +733,190 @@ public sealed unsafe class HipKernels : IDisposable
         HipApi.hipModuleLaunchKernel(func, gridDim, 1, 1, BlockSize, 1, 1, 0, stream, args, null).ThrowOnError();
     }
 
+    /// <summary>Returns true if the quantization type has a dedicated quantized GEMV kernel with FP32 output.</summary>
+    public static bool HasQuantizedGemvF32Out(QuantizationType qt) =>
+        qt is QuantizationType.Q8_0 or QuantizationType.Q4_K or QuantizationType.Q6_K;
+
+    /// <summary>Runs quantized GEMV: y[n] = W[n, k] @ x[k] with FP32 output y.</summary>
+    public void LaunchQuantizedGemvF32Out(nint weight, QuantizationType qt, nint x, nint y,
+                                          int n, int k, nint stream)
+    {
+        nint func = qt switch
+        {
+            QuantizationType.Q8_0 => _quantizedGemvQ8_0F32OutFunc,
+            QuantizationType.Q4_K => _quantizedGemvQ4_KF32OutFunc,
+            QuantizationType.Q6_K => _quantizedGemvQ6_KF32OutFunc,
+            _ => throw new NotSupportedException($"GPU quantized GEMV with FP32 out not supported for {qt}")
+        };
+
+        nint wArg = weight, xArg = x, yArg = y;
+        int nArg = n, kArg = k;
+        void** args = stackalloc void*[] { &wArg, &xArg, &yArg, &nArg, &kArg };
+
+        uint gridDim = (uint)((n + 7) / 8);
+        if (gridDim == 0) gridDim = 1;
+
+        HipApi.hipModuleLaunchKernel(func, gridDim, 1, 1, BlockSize, 1, 1, 0, stream, args, null).ThrowOnError();
+    }
+
+    // ─────────────────────── Fused Gate + Up + SwiGLU ───────────────────────
+
+    /// <summary>Returns true if the quantization type is supported by the fused Gate+Up+SwiGLU kernel.</summary>
+    public static bool HasFusedGateUpSwiglu(QuantizationType qt) =>
+        qt is QuantizationType.Q8_0 or QuantizationType.Q4_0 or QuantizationType.Q5_0
+           or QuantizationType.Q4_K or QuantizationType.Q5_K or QuantizationType.Q6_K or QuantizationType.F16;
+
+    /// <summary>Runs fused Gate + Up GEMV with SwiGLU activation for decode.</summary>
+    public void LaunchFusedGateUpSwiglu(
+        nint gateWeight, nint upWeight, QuantizationType qt,
+        nint gateBias, nint upBias,
+        nint x, nint output,
+        int intermediateSize, int k, nint stream)
+    {
+        nint func = qt switch
+        {
+            QuantizationType.Q8_0 => _fusedGateUpSwigluQ8_0Func,
+            QuantizationType.Q4_0 => _fusedGateUpSwigluQ4_0Func,
+            QuantizationType.Q5_0 => _fusedGateUpSwigluQ5_0Func,
+            QuantizationType.Q4_K => _fusedGateUpSwigluQ4_KFunc,
+            QuantizationType.Q5_K => _fusedGateUpSwigluQ5_KFunc,
+            QuantizationType.Q6_K => _fusedGateUpSwigluQ6_KFunc,
+            QuantizationType.F16 => _fusedGateUpSwigluF16Func,
+            _ => throw new NotSupportedException($"Fused Gate+Up+SwiGLU not supported for {qt}")
+        };
+
+        nint gwArg = gateWeight, uwArg = upWeight;
+        nint gbArg = gateBias, ubArg = upBias;
+        nint xArg = x, outArg = output;
+        int intArg = intermediateSize, kArg = k;
+
+        void** args = stackalloc void*[] {
+            &gwArg, &uwArg, &gbArg, &ubArg,
+            &xArg, &outArg, &intArg, &kArg
+        };
+
+        uint gridDim = (uint)((intermediateSize + 7) / 8);
+        if (gridDim == 0) gridDim = 1;
+
+        HipApi.hipModuleLaunchKernel(func, gridDim, 1, 1, BlockSize, 1, 1, 0, stream, args, null).ThrowOnError();
+    }
+
+    /// <summary>Returns true if the quantization type is supported by the vectorized MMVQ fused Gate+Up+SwiGLU kernel.</summary>
+    public static bool HasFusedGateUpSwigluMmvq(QuantizationType qt) =>
+        qt is QuantizationType.Q8_0 or QuantizationType.Q4_K;
+
+    /// <summary>Runs vectorized MMVQ fused Gate + Up GEMV with SwiGLU activation for decode (H3.2).</summary>
+    public void LaunchFusedGateUpSwigluMmvq(
+        nint gateWeight, nint upWeight, QuantizationType qt,
+        nint gateBias, nint upBias,
+        nint xQ8_1, nint output,
+        int intermediateSize, int k, nint stream)
+    {
+        nint func = qt switch
+        {
+            QuantizationType.Q8_0 => _fusedGateUpSwigluMmvqQ8_0Func,
+            QuantizationType.Q4_K => _fusedGateUpSwigluMmvqQ4_KFunc,
+            _ => throw new NotSupportedException($"MMVQ Fused Gate+Up+SwiGLU not supported for {qt}")
+        };
+
+        nint gwArg = gateWeight, uwArg = upWeight;
+        nint gbArg = gateBias, ubArg = upBias;
+        nint xArg = xQ8_1, outArg = output;
+        int intArg = intermediateSize, kArg = k;
+
+        void** args = stackalloc void*[] {
+            &gwArg, &uwArg, &gbArg, &ubArg,
+            &xArg, &outArg, &intArg, &kArg
+        };
+
+        uint gridDim = (uint)((intermediateSize + 7) / 8);
+        if (gridDim == 0) gridDim = 1;
+
+        HipApi.hipModuleLaunchKernel(func, gridDim, 1, 1, BlockSize, 1, 1, 0, stream, args, null).ThrowOnError();
+    }
+
+    // ─────────────────────── Fused QKV GEMV ───────────────────────
+
+    /// <summary>Returns true if the quantization type is supported by the fused QKV GEMV kernel.</summary>
+    public static bool HasFusedQkvGemv(QuantizationType qt) =>
+        qt is QuantizationType.Q8_0 or QuantizationType.Q4_0 or QuantizationType.Q5_0
+           or QuantizationType.Q4_K or QuantizationType.Q5_K or QuantizationType.Q6_K or QuantizationType.F16;
+
+    /// <summary>Runs fused Q, K, V GEMV projections in a single grid launch for decode.</summary>
+    public void LaunchFusedQkvGemv(
+        nint qWeight, nint kWeight, nint vWeight, QuantizationType qt,
+        nint qBias, nint kBias, nint vBias,
+        nint x, nint qOut, nint kOut, nint vOut,
+        int dimQ, int dimK, int dimV, int k, nint stream)
+    {
+        nint func = qt switch
+        {
+            QuantizationType.Q8_0 => _fusedQkvGemvQ8_0Func,
+            QuantizationType.Q4_0 => _fusedQkvGemvQ4_0Func,
+            QuantizationType.Q5_0 => _fusedQkvGemvQ5_0Func,
+            QuantizationType.Q4_K => _fusedQkvGemvQ4_KFunc,
+            QuantizationType.Q5_K => _fusedQkvGemvQ5_KFunc,
+            QuantizationType.Q6_K => _fusedQkvGemvQ6_KFunc,
+            QuantizationType.F16 => _fusedQkvGemvF16Func,
+            _ => throw new NotSupportedException($"Fused QKV GEMV not supported for {qt}")
+        };
+
+        nint qwArg = qWeight, kwArg = kWeight, vwArg = vWeight;
+        nint qbArg = qBias, kbArg = kBias, vbArg = vBias;
+        nint xArg = x, qoArg = qOut, koArg = kOut, voArg = vOut;
+        int dqArg = dimQ, dkArg = dimK, dvArg = dimV, kArg = k;
+
+        void** args = stackalloc void*[] {
+            &qwArg, &kwArg, &vwArg,
+            &qbArg, &kbArg, &vbArg,
+            &xArg, &qoArg, &koArg, &voArg,
+            &dqArg, &dkArg, &dvArg, &kArg
+        };
+
+        int totalRows = dimQ + dimK + dimV;
+        uint gridDim = (uint)((totalRows + 7) / 8);
+        if (gridDim == 0) gridDim = 1;
+
+        HipApi.hipModuleLaunchKernel(func, gridDim, 1, 1, BlockSize, 1, 1, 0, stream, args, null).ThrowOnError();
+    }
+
+    /// <summary>Returns true if the quantization type is supported by the vectorized MMVQ fused QKV GEMV kernel.</summary>
+    public static bool HasFusedQkvGemvMmvq(QuantizationType qt) =>
+        qt is QuantizationType.Q8_0 or QuantizationType.Q4_K;
+
+    /// <summary>Runs vectorized MMVQ fused Q, K, V GEMV projections in a single grid launch for decode (H3.2).</summary>
+    public void LaunchFusedQkvGemvMmvq(
+        nint qWeight, nint kWeight, nint vWeight, QuantizationType qt,
+        nint qBias, nint kBias, nint vBias,
+        nint xQ8_1, nint qOut, nint kOut, nint vOut,
+        int dimQ, int dimK, int dimV, int k, nint stream)
+    {
+        nint func = qt switch
+        {
+            QuantizationType.Q8_0 => _fusedQkvGemvMmvqQ8_0Func,
+            QuantizationType.Q4_K => _fusedQkvGemvMmvqQ4_KFunc,
+            _ => throw new NotSupportedException($"MMVQ Fused QKV GEMV not supported for {qt}")
+        };
+
+        nint qwArg = qWeight, kwArg = kWeight, vwArg = vWeight;
+        nint qbArg = qBias, kbArg = kBias, vbArg = vBias;
+        nint xArg = xQ8_1, qoArg = qOut, koArg = kOut, voArg = vOut;
+        int dqArg = dimQ, dkArg = dimK, dvArg = dimV, kArg = k;
+
+        void** args = stackalloc void*[] {
+            &qwArg, &kwArg, &vwArg,
+            &qbArg, &kbArg, &vbArg,
+            &xArg, &qoArg, &koArg, &voArg,
+            &dqArg, &dkArg, &dvArg, &kArg
+        };
+
+        int totalRows = dimQ + dimK + dimV;
+        uint gridDim = (uint)((totalRows + 7) / 8);
+        if (gridDim == 0) gridDim = 1;
+
+        HipApi.hipModuleLaunchKernel(func, gridDim, 1, 1, BlockSize, 1, 1, 0, stream, args, null).ThrowOnError();
+    }
+
     // ─────────────────────── Attention ───────────────────────
 
     /// <summary>Tiled scaled dot-product attention with causal mask, sliding window and GQA (FP16).</summary>
@@ -600,15 +925,34 @@ public sealed unsafe class HipKernels : IDisposable
                                  int numHeads, int numKvHeads, int headDim,
                                  int positionOffset, int slidingWindow, nint stream)
     {
-        nint qArg = q, kArg = k, vArg = v, outArg = output;
-        int sqArg = seqQ, skvArg = seqKv;
-        int nhArg = numHeads, nkvArg = numKvHeads, hdArg = headDim;
-        int poArg = positionOffset, swArg = slidingWindow;
+        if (seqQ == 1 && (headDim == 64 || headDim == 128))
+        {
+            nint qArg = q, kArg = k, vArg = v, outArg = output;
+            int skvArg = seqKv;
+            int nhArg = numHeads, nkvArg = numKvHeads, hdArg = headDim;
+            int poArg = positionOffset, swArg = slidingWindow;
 
-        void** args = stackalloc void*[] {
-            &qArg, &kArg, &vArg, &outArg,
-            &sqArg, &skvArg, &nhArg, &nkvArg, &hdArg,
-            &poArg, &swArg
+            void** args = stackalloc void*[] {
+                &qArg, &kArg, &vArg, &outArg,
+                &skvArg, &nhArg, &nkvArg, &hdArg,
+                &poArg, &swArg
+            };
+
+            HipApi.hipModuleLaunchKernel(_attentionDecodeF16Func,
+                (uint)numHeads, 1, 1, BlockSize, 1, 1,
+                0, stream, args, null).ThrowOnError();
+            return;
+        }
+
+        nint qArg2 = q, kArg2 = k, vArg2 = v, outArg2 = output;
+        int sqArg2 = seqQ, skvArg2 = seqKv;
+        int nhArg2 = numHeads, nkvArg2 = numKvHeads, hdArg2 = headDim;
+        int poArg2 = positionOffset, swArg2 = slidingWindow;
+
+        void** args2 = stackalloc void*[] {
+            &qArg2, &kArg2, &vArg2, &outArg2,
+            &sqArg2, &skvArg2, &nhArg2, &nkvArg2, &hdArg2,
+            &poArg2, &swArg2
         };
 
         int numBlocks = seqQ * numHeads;
@@ -617,7 +961,7 @@ public sealed unsafe class HipKernels : IDisposable
 
         HipApi.hipModuleLaunchKernel(_attentionF16Func,
             (uint)numBlocks, 1, 1, BlockSize, 1, 1,
-            sharedBytes, stream, args, null).ThrowOnError();
+            sharedBytes, stream, args2, null).ThrowOnError();
     }
 
     /// <summary>Tiled scaled dot-product attention with causal mask, sliding window and GQA (FP32).</summary>
@@ -646,6 +990,88 @@ public sealed unsafe class HipKernels : IDisposable
             sharedBytes, stream, args, null).ThrowOnError();
     }
 
+    // ─────────────────────── Quantize Q8_1 ───────────────────────
+
+    /// <summary>Quantizes FP16 activations on device into block_q8_1 format (H3.2).</summary>
+    public void LaunchQuantizeQ8_1F16(nint x, nint y, int k, nint stream)
+    {
+        nint xArg = x, yArg = y;
+        int kArg = k;
+        void** args = stackalloc void*[] { &xArg, &yArg, &kArg };
+        int numBlocks = k / 32;
+        uint gridDim = (uint)((numBlocks + 7) / 8);
+        if (gridDim == 0) gridDim = 1;
+        HipApi.hipModuleLaunchKernel(_quantizeQ8_1F16Func,
+            gridDim, 1, 1, BlockSize, 1, 1, 0, stream, args, null).ThrowOnError();
+    }
+
+    /// <summary>Quantizes FP32 activations on device into block_q8_1 format (H3.2).</summary>
+    public void LaunchQuantizeQ8_1F32(nint x, nint y, int k, nint stream)
+    {
+        nint xArg = x, yArg = y;
+        int kArg = k;
+        void** args = stackalloc void*[] { &xArg, &yArg, &kArg };
+        int numBlocks = k / 32;
+        uint gridDim = (uint)((numBlocks + 7) / 8);
+        if (gridDim == 0) gridDim = 1;
+        HipApi.hipModuleLaunchKernel(_quantizeQ8_1F32Func,
+            gridDim, 1, 1, BlockSize, 1, 1, 0, stream, args, null).ThrowOnError();
+    }
+
+    // ─────────────────────── MMVQ GEMV ───────────────────────
+
+    /// <summary>Returns true if the quantization type has a dedicated mmvq GEMV implementation.</summary>
+    public static bool HasMmvqGemv(QuantizationType qt) =>
+        qt is QuantizationType.Q8_0 or QuantizationType.Q4_K;
+
+    /// <summary>Executes vectorized mmvq GEMV for Q8_0 weights with Q8_1 activations (H3.2).</summary>
+    public void LaunchMmvqGemvQ8_0(nint weight, nint xQ8_1, nint y, int n, int k, nint stream)
+    {
+        nint wArg = weight, xArg = xQ8_1, yArg = y;
+        int nArg = n, kArg = k;
+        void** args = stackalloc void*[] { &wArg, &xArg, &yArg, &nArg, &kArg };
+        uint gridDim = (uint)((n + 7) / 8);
+        if (gridDim == 0) gridDim = 1;
+        HipApi.hipModuleLaunchKernel(_mmvqGemvQ8_0Func,
+            gridDim, 1, 1, BlockSize, 1, 1, 0, stream, args, null).ThrowOnError();
+    }
+
+    /// <summary>Executes vectorized mmvq GEMV for Q8_0 weights with FP16 activations via fdot2 (H3.2).</summary>
+    public void LaunchMmvqGemvQ8_0Fdot2(nint weight, nint x, nint y, int n, int k, nint stream)
+    {
+        nint wArg = weight, xArg = x, yArg = y;
+        int nArg = n, kArg = k;
+        void** args = stackalloc void*[] { &wArg, &xArg, &yArg, &nArg, &kArg };
+        uint gridDim = (uint)((n + 7) / 8);
+        if (gridDim == 0) gridDim = 1;
+        HipApi.hipModuleLaunchKernel(_mmvqGemvQ8_0Fdot2Func,
+            gridDim, 1, 1, BlockSize, 1, 1, 0, stream, args, null).ThrowOnError();
+    }
+
+    /// <summary>Executes vectorized mmvq GEMV for Q4_K weights with Q8_1 activations (H3.2).</summary>
+    public void LaunchMmvqGemvQ4_K(nint weight, nint xQ8_1, nint y, int n, int k, nint stream)
+    {
+        nint wArg = weight, xArg = xQ8_1, yArg = y;
+        int nArg = n, kArg = k;
+        void** args = stackalloc void*[] { &wArg, &xArg, &yArg, &nArg, &kArg };
+        uint gridDim = (uint)((n + 7) / 8);
+        if (gridDim == 0) gridDim = 1;
+        HipApi.hipModuleLaunchKernel(_mmvqGemvQ4_KFunc,
+            gridDim, 1, 1, BlockSize, 1, 1, 0, stream, args, null).ThrowOnError();
+    }
+
+    /// <summary>Executes vectorized mmvq GEMV for Q6_K weights with Q8_1 activations (H3.2).</summary>
+    public void LaunchMmvqGemvQ6_K(nint weight, nint xQ8_1, nint y, int n, int k, nint stream)
+    {
+        nint wArg = weight, xArg = xQ8_1, yArg = y;
+        int nArg = n, kArg = k;
+        void** args = stackalloc void*[] { &wArg, &xArg, &yArg, &nArg, &kArg };
+        uint gridDim = (uint)((n + 7) / 8);
+        if (gridDim == 0) gridDim = 1;
+        HipApi.hipModuleLaunchKernel(_mmvqGemvQ6_KFunc,
+            gridDim, 1, 1, BlockSize, 1, 1, 0, stream, args, null).ThrowOnError();
+    }
+
     /// <summary>Disposes all loaded HIP kernel modules.</summary>
     public void Dispose()
     {
@@ -665,5 +1091,9 @@ public sealed unsafe class HipKernels : IDisposable
         _dequantModule.Dispose();
         _quantizedGemvModule.Dispose();
         _attentionModule.Dispose();
+        _fusedGateUpSwigluModule.Dispose();
+        _fusedQkvGemvModule.Dispose();
+        _quantizeQ8_1Module.Dispose();
+        _mmvqModule.Dispose();
     }
 }

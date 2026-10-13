@@ -1,4 +1,5 @@
 using System.Numerics;
+using DotLLM.Core.Tensors;
 using DotLLM.Hip.Interop;
 
 namespace DotLLM.Hip;
@@ -44,6 +45,9 @@ internal sealed class HipForwardState : IDisposable
     // On-the-fly dequantization scratch (FP16)
     public nint DequantScratch;
 
+    // On-the-fly Q8_1 activation quantization scratch (H3.2)
+    public nint Q8_1Scratch;
+
     // Small device buffers for token IDs and positions
     public nint TokenIdsDevice; // [maxSeqLen] int32
     public nint PositionsDevice;// [maxSeqLen] int32
@@ -52,6 +56,9 @@ internal sealed class HipForwardState : IDisposable
     public HipPinnedBuffer TokenIdsHost { get; }
     public HipPinnedBuffer PositionsHost { get; }
     public HipPinnedBuffer LogitsHost { get; }
+
+    /// <summary>Pre-allocated non-owning tensor view wrapping <see cref="LogitsHost"/> for zero-alloc return.</summary>
+    public UnmanagedTensor LogitsTensor { get; }
 
     public HipForwardState(int hiddenSize, int numHeads, int numKvHeads, int headDim,
                            int intermediateSize, int vocabSize, int maxInitialSeqLen = 2048)
@@ -68,6 +75,7 @@ internal sealed class HipForwardState : IDisposable
         TokenIdsHost = new HipPinnedBuffer((long)maxInitialSeqLen * sizeof(int));
         PositionsHost = new HipPinnedBuffer((long)maxInitialSeqLen * sizeof(int));
         LogitsHost = new HipPinnedBuffer((long)vocabSize * sizeof(float));
+        LogitsTensor = new UnmanagedTensor(new TensorShape(1, vocabSize), DType.Float32, -1, LogitsHost.Pointer, ownsMemory: false);
 
         // Device tokens / positions buffers
         TokenIdsDevice = AllocDevice((long)maxInitialSeqLen * sizeof(int));
@@ -82,6 +90,11 @@ internal sealed class HipForwardState : IDisposable
             (long)Math.Max(numHeads * headDim, numKvHeads * headDim) * hiddenSize,
             (long)intermediateSize * hiddenSize);
         DequantScratch = AllocDevice(maxProjectionElements * Fp16Bytes);
+
+        // Q8_1 activation scratch buffer sized for the largest activation vector
+        long maxActivationElements = Math.Max(hiddenSize, intermediateSize);
+        long maxQ8_1Bytes = ((maxActivationElements + 31) / 32) * 36;
+        Q8_1Scratch = AllocDevice(maxQ8_1Bytes);
 
         // Initial allocation for decode (seqLen = 1)
         EnsureCapacity(1);
@@ -169,6 +182,10 @@ internal sealed class HipForwardState : IDisposable
             (long)Math.Max(_numHeads * _headDim, _numKvHeads * _headDim) * _hiddenSize,
             (long)_intermediateSize * _hiddenSize);
         FreeDevice(ref DequantScratch, maxProjectionElements * Fp16Bytes);
+
+        long maxActivationElements = Math.Max(_hiddenSize, _intermediateSize);
+        long maxQ8_1Bytes = ((maxActivationElements + 31) / 32) * 36;
+        FreeDevice(ref Q8_1Scratch, maxQ8_1Bytes);
 
         FreeDevice(ref TokenIdsDevice, 2048 * sizeof(int));
         FreeDevice(ref PositionsDevice, 2048 * sizeof(int));

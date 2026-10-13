@@ -11,6 +11,7 @@ public sealed class UnmanagedTensor : ITensor
 {
     private nint _ptr;
     private readonly long _elementCount;
+    private readonly bool _ownsMemory;
 
     /// <inheritdoc/>
     public TensorShape Shape { get; }
@@ -34,19 +35,21 @@ public sealed class UnmanagedTensor : ITensor
     public long ByteCount => DType.ComputeByteCount(_elementCount);
 
     /// <summary>
-    /// Wraps an existing aligned pointer in a tensor. The tensor takes ownership of the pointer.
+    /// Wraps an existing aligned pointer in a tensor. When <paramref name="ownsMemory"/> is true, the tensor takes ownership.
     /// </summary>
     /// <param name="shape">Tensor shape.</param>
     /// <param name="dtype">Element data type.</param>
     /// <param name="deviceId">Device ID (-1 for CPU).</param>
-    /// <param name="ptr">Pointer to 64-byte-aligned memory. Ownership transfers to this tensor.</param>
-    public UnmanagedTensor(TensorShape shape, DType dtype, int deviceId, nint ptr)
+    /// <param name="ptr">Pointer to 64-byte-aligned memory.</param>
+    /// <param name="ownsMemory">Whether this tensor owns the memory and should free it upon disposal.</param>
+    public UnmanagedTensor(TensorShape shape, DType dtype, int deviceId, nint ptr, bool ownsMemory = true)
     {
         Shape = shape;
         DType = dtype;
         DeviceId = deviceId;
         _ptr = ptr;
         _elementCount = shape.ElementCount;
+        _ownsMemory = ownsMemory;
     }
 
     /// <summary>
@@ -67,20 +70,25 @@ public sealed class UnmanagedTensor : ITensor
     /// <summary>Releases the unmanaged memory via the finalizer if <see cref="Dispose"/> was not called.</summary>
     ~UnmanagedTensor()
     {
-        FreeMemory();
+        if (_ownsMemory)
+            FreeMemory();
     }
 
     /// <inheritdoc/>
     public void Dispose()
     {
         FreeMemory();
-        GC.SuppressFinalize(this);
+        if (_ownsMemory)
+            GC.SuppressFinalize(this);
     }
 
     private unsafe void FreeMemory()
     {
-        nint ptr = Interlocked.Exchange(ref _ptr, 0);
-        if (ptr != 0)
-            NativeMemory.AlignedFree((void*)ptr);
+        if (_ownsMemory)
+        {
+            nint ptr = Interlocked.Exchange(ref _ptr, 0);
+            if (ptr != 0)
+                NativeMemory.AlignedFree((void*)ptr);
+        }
     }
 }

@@ -92,9 +92,11 @@ internal static unsafe partial class HipApi
     public static partial int hipGetDeviceCount(out int count);
 
     [LibraryImport(LibName)]
+    [SuppressGCTransition]
     public static partial int hipSetDevice(int deviceId);
 
     [LibraryImport(LibName)]
+    [SuppressGCTransition]
     public static partial int hipGetDevice(out int deviceId);
 
     [LibraryImport(LibName)]
@@ -131,12 +133,14 @@ internal static unsafe partial class HipApi
     public static partial int hipMemcpy(nint dst, nint src, nuint sizeBytes, int kind);
 
     [LibraryImport(LibName)]
+    [SuppressGCTransition]
     public static partial int hipMemcpyAsync(nint dst, nint src, nuint sizeBytes, int kind, nint stream);
 
     [LibraryImport(LibName)]
     public static partial int hipMemset(nint dst, int value, nuint sizeBytes);
 
     [LibraryImport(LibName)]
+    [SuppressGCTransition]
     public static partial int hipMemsetAsync(nint dst, int value, nuint sizeBytes, nint stream);
 
     // ── Stream Operations ────────────────────────────────────────────
@@ -165,6 +169,7 @@ internal static unsafe partial class HipApi
     public static partial int hipModuleUnload(nint module);
 
     [LibraryImport(LibName)]
+    [SuppressGCTransition]
     public static partial int hipModuleLaunchKernel(
         nint function,
         uint gridDimX, uint gridDimY, uint gridDimZ,
@@ -183,6 +188,7 @@ internal static unsafe partial class HipApi
     public static partial int hipEventCreateWithFlags(out nint evt, uint flags);
 
     [LibraryImport(LibName)]
+    [SuppressGCTransition]
     public static partial int hipEventRecord(nint evt, nint stream);
 
     [LibraryImport(LibName)]

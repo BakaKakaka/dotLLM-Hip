@@ -543,4 +543,65 @@ public class HipAttentionTests
             }
         }
     }
+
+    [Fact]
+    public unsafe void BenchmarkAttention_8B_Decode()
+    {
+        Skip.IfNot(HipDevice.IsAvailable(out string? reason), reason);
+        var devices = HipDevice.GetSupportedDevices();
+        Assert.NotEmpty(devices);
+
+        int seqQ = 1;
+        int seqKv = 256;
+        int numHeads = 32;
+        int numKvHeads = 8;
+        int headDim = 128;
+        int posOffset = 255;
+
+        nuint qBytes = (nuint)(seqQ * numHeads * headDim * sizeof(Half));
+        nuint kBytes = (nuint)(seqKv * numKvHeads * headDim * sizeof(Half));
+        nuint vBytes = (nuint)(seqKv * numKvHeads * headDim * sizeof(Half));
+        nuint outBytes = (nuint)(seqQ * numHeads * headDim * sizeof(Half));
+
+        foreach (var device in devices)
+        {
+            device.MakeCurrent();
+            using var kernels = new HipKernels(device.Arch);
+            using var stream = HipStream.Create();
+
+            HipApi.hipMalloc(out nint dQ, qBytes).ThrowOnError();
+            HipApi.hipMalloc(out nint dK, kBytes).ThrowOnError();
+            HipApi.hipMalloc(out nint dV, vBytes).ThrowOnError();
+            HipApi.hipMalloc(out nint dOut, outBytes).ThrowOnError();
+
+            try
+            {
+                // Warmup
+                for (int i = 0; i < 20; i++)
+                    kernels.LaunchAttention(dQ, dK, dV, dOut, seqQ, seqKv, numHeads, numKvHeads, headDim, posOffset, 0, stream.Handle);
+                stream.Synchronize();
+
+                HipApi.hipEventCreate(out nint start).ThrowOnError();
+                HipApi.hipEventCreate(out nint stop).ThrowOnError();
+
+                HipApi.hipEventRecord(start, stream.Handle).ThrowOnError();
+                const int iters = 100;
+                for (int i = 0; i < iters; i++)
+                    kernels.LaunchAttention(dQ, dK, dV, dOut, seqQ, seqKv, numHeads, numKvHeads, headDim, posOffset, 0, stream.Handle);
+                HipApi.hipEventRecord(stop, stream.Handle).ThrowOnError();
+                HipApi.hipEventSynchronize(stop).ThrowOnError();
+
+                HipApi.hipEventElapsedTime(out float ms, start, stop).ThrowOnError();
+                HipApi.hipEventDestroy(start);
+                HipApi.hipEventDestroy(stop);
+
+                double us = (ms * 1000.0) / iters;
+                System.Console.WriteLine($"[BENCH] {device.Arch} Attention 8B decode (seqKv={seqKv}): {us:F2} µs ({us * 32 / 1000.0:F3} ms for 32 layers)");
+            }
+            finally
+            {
+                HipApi.hipFree(dQ); HipApi.hipFree(dK); HipApi.hipFree(dV); HipApi.hipFree(dOut);
+            }
+        }
+    }
 }

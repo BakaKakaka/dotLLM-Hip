@@ -7,12 +7,24 @@
 #include "rdna_common.h"
 #include <stdint.h>
 
+template <typename TOut>
+__device__ __forceinline__ void write_gemv_out(TOut* y, int row, float val)
+{
+    y[row] = val;
+}
+
+template <>
+__device__ __forceinline__ void write_gemv_out<__half>(__half* y, int row, float val)
+{
+    y[row] = to_half(val);
+}
+
 // ── Q8_0: 34 bytes per 32 values ────────────────────────────────────
-extern "C" __global__ void __launch_bounds__(256)
-quantized_gemv_q8_0(
+template <typename TOut>
+__device__ __forceinline__ void gemv_q8_0_impl(
     const uint8_t* __restrict__ weight,
     const __half* __restrict__ x,
-    __half* __restrict__ y,
+    TOut* __restrict__ y,
     const int n,
     const int k)
 {
@@ -35,7 +47,29 @@ quantized_gemv_q8_0(
 
     float row_sum = wave_sum(lane_acc);
     if (lane == 0)
-        y[row] = to_half(row_sum);
+        write_gemv_out(y, row, row_sum);
+}
+
+extern "C" __global__ void __launch_bounds__(256)
+quantized_gemv_q8_0(
+    const uint8_t* __restrict__ weight,
+    const __half* __restrict__ x,
+    __half* __restrict__ y,
+    const int n,
+    const int k)
+{
+    gemv_q8_0_impl(weight, x, y, n, k);
+}
+
+extern "C" __global__ void __launch_bounds__(256)
+quantized_gemv_q8_0_f32out(
+    const uint8_t* __restrict__ weight,
+    const __half* __restrict__ x,
+    float* __restrict__ y,
+    const int n,
+    const int k)
+{
+    gemv_q8_0_impl(weight, x, y, n, k);
 }
 
 // ── Q4_0: 18 bytes per 32 values ────────────────────────────────────
@@ -113,11 +147,11 @@ quantized_gemv_q5_0(
 }
 
 // ── Q4_K: 144 bytes per 256 values ──────────────────────────────────
-extern "C" __global__ void __launch_bounds__(256)
-quantized_gemv_q4_k(
+template <typename TOut>
+__device__ __forceinline__ void gemv_q4_k_impl(
     const uint8_t* __restrict__ weight,
     const __half* __restrict__ x,
-    __half* __restrict__ y,
+    TOut* __restrict__ y,
     const int n,
     const int k)
 {
@@ -173,7 +207,29 @@ quantized_gemv_q4_k(
 
     float row_sum = wave_sum(lane_acc);
     if (lane == 0)
-        y[row] = to_half(row_sum);
+        write_gemv_out(y, row, row_sum);
+}
+
+extern "C" __global__ void __launch_bounds__(256)
+quantized_gemv_q4_k(
+    const uint8_t* __restrict__ weight,
+    const __half* __restrict__ x,
+    __half* __restrict__ y,
+    const int n,
+    const int k)
+{
+    gemv_q4_k_impl(weight, x, y, n, k);
+}
+
+extern "C" __global__ void __launch_bounds__(256)
+quantized_gemv_q4_k_f32out(
+    const uint8_t* __restrict__ weight,
+    const __half* __restrict__ x,
+    float* __restrict__ y,
+    const int n,
+    const int k)
+{
+    gemv_q4_k_impl(weight, x, y, n, k);
 }
 
 // ── Q5_K: 176 bytes per 256 values ──────────────────────────────────
@@ -238,11 +294,11 @@ quantized_gemv_q5_k(
 }
 
 // ── Q6_K: 210 bytes per 256 values ──────────────────────────────────
-extern "C" __global__ void __launch_bounds__(256)
-quantized_gemv_q6_k(
+template <typename TOut>
+__device__ __forceinline__ void gemv_q6_k_impl(
     const uint8_t* __restrict__ weight,
     const __half* __restrict__ x,
-    __half* __restrict__ y,
+    TOut* __restrict__ y,
     const int n,
     const int k)
 {
@@ -292,5 +348,27 @@ quantized_gemv_q6_k(
 
     float row_sum = wave_sum(lane_acc);
     if (lane == 0)
-        y[row] = to_half(row_sum);
+        write_gemv_out(y, row, row_sum);
+}
+
+extern "C" __global__ void __launch_bounds__(256)
+quantized_gemv_q6_k(
+    const uint8_t* __restrict__ weight,
+    const __half* __restrict__ x,
+    __half* __restrict__ y,
+    const int n,
+    const int k)
+{
+    gemv_q6_k_impl(weight, x, y, n, k);
+}
+
+extern "C" __global__ void __launch_bounds__(256)
+quantized_gemv_q6_k_f32out(
+    const uint8_t* __restrict__ weight,
+    const __half* __restrict__ x,
+    float* __restrict__ y,
+    const int n,
+    const int k)
+{
+    gemv_q6_k_impl(weight, x, y, n, k);
 }
