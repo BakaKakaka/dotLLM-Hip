@@ -180,45 +180,90 @@ Radeon Developer Tool Suite 2026-10-02 (RGP 2.7.1, RDP 3.5.1, RGA 2.15.0) finns 
   & "$env:DOTLLM_RDTS\rga.exe" -s bin -a stats.csv --isa isa.txt --livereg livereg.txt <kernel>.elf
   ```
   Exempel, `toolchain_smoke` `smoke` på gfx1100: 19 VGPR, 18 SGPR, 0 spills, 0 LDS, 336 B ISA. RGA kan inte läsa bundlen direkt ("not a valid object file").
-- **RGP:** README:n anger HIP och OpenCL på Windows 11 för RX 7000/9000. Själva fångsten via Radeon Developer Panel är **ännu inte verifierad** och följs upp i H2.8. Fram till dess gäller `hipEvent`-tidtagning och RGA-rapporten.
+- **RGP (verifierat 2026-10-13, H2.8):** Tracing och fångst av HIP-körningar via Radeon Developer Panel på Windows 11 är verifierat för både `DotLLM.Hip.Spikes.exe` och `DotLLM.Cli.exe` (apphost, aldrig `dotnet.exe`).
+  
+  **Arbetsflöde för CLI-fångst (automatiserad):**
+  ```powershell
+  # 1. Starta RDP CLI-lyssnaren i bakgrunden i profileringsläge:
+  & "$env:DOTLLM_RDTS\RadeonDeveloperPanelCLI.exe" -m profiling -p DotLLM -a dispatch:1:50 --rgp-capture-mode dispatch -o benchmarks\dotllm_cli_inference.rgp --verbose
 
-## 6. Baseline-mätningar – M2 (H2.7)
+  # 2. Kör HIP apphost-binären (drivrutinen ansluter automatiskt till RDP-lyssnaren):
+  .\src\DotLLM.Cli\bin\Release\net10.0\DotLLM.Cli.exe run C:\Users\benny\.dotllm\models\bartowski\Llama-3.2-1B-Instruct-GGUF\Llama-3.2-1B-Instruct-Q8_0.gguf -p "What is HIP?" -n 10 --device hip:gfx1100
+  ```
 
-Verifierat 2026-10-13 på målmaskinen:
+  **Verifierat utfall:**
+  - Drivrutinen detekterar och ansluter processen: `[INFO] [RGP Trace Source] Client connected [HIP]`.
+  - Tracing initieras och fångst triggas: `Successfully began trace [HIP]` och `Client reached POSTDEVICEINIT state`.
+  - Dispatchar och SQTT-hårdvarutraces samlas in och sparas: `Profiling (RGP) trace completed successfully! Size: 568 364 bytes`. Sparad fil: `benchmarks\dotllm_cli_inference.rgp` (och 81 888 bytes för Spikes i `benchmarks\rgp_capture.rgp`).
+  - Profilen kan öppnas och analyseras i `& "$env:DOTLLM_RDTS\RadeonGPUProfiler.exe" benchmarks\dotllm_cli_inference.rgp` för detaljerad inspektion av kernel-dispatchar, exekveringstider och GPU-occupancy.
+
+## 6. Baseline-mätningar – M2 och H2.7b
+
+Mätt och verifierat 2026-10-13 på målmaskinen:
 - **GPU:** AMD Radeon RX 7900 XTX (`gfx1100`, ordinal 0)
 - **OS / Drivrutin:** Windows 11 x64, Adrenalin 32.0.22001.17002, HIP SDK 7.2.3 (7.2.60201)
 - **llama.cpp:** build **b11583** (officiella Windows-binärer):
   - HIP: `llama-b11583-bin-win-rocm-10.0-x64\llama-completion.exe`, enhet `-dev ROCm0`
   - Vulkan: `llama-b11583-bin-win-vulkan-x64\llama-completion.exe`, enhet `-dev Vulkan2`
-- **dotLLM:** `DotLLM.Hip` på `--device hip:gfx1100` via `scripts/bench_compare.py`
-- **Mätmetod:** 5 körningar (1 uppvärmningskörning bortkastad), greedy generering (`--temp 0`), max 20 tokens. Best-of-N (max tok/s, min ms) per tabell.
+- **dotLLM:** `DotLLM.Hip` på `--device hip:gfx1100` via `scripts/bench_compare.py` (`--cli`)
+- **Mätmetod (M3-regeln, H2.7b):** 128 genererade tokens (`--tokens 128`), 5 mätta körningar efter uppvärmning (`--runs 5 --median`), girig generering (`--temp 0`). Redovisar **median** och CV (variationskoefficient). Ingen best-of-N.
 
 ### 6.1 Llama-3.2-1B-Instruct Q8_0
 
 | Prompt | Motor | Prefill ms | Prefill tok/s | Decode ms | Decode tok/s | ms/tok | Totalt tok/s | CV |
 |---|---|---:|---:|---:|---:|---:|---:|---:|
-| `prompt-medium.txt` (~229 tok) | **dotLLM (hip:gfx1100)** | 100,7 | 2 274,8 | 104,5 | 181,8 | 5,22 | 1 213,5 | 1,5 % |
-| `prompt-medium.txt` (~229 tok) | **llama.cpp (ROCm0)** | 31,9 | 7 150,2 | 61,2 | 310,2 | 3,22 | 2 652,2 | 1,3 % |
-| `prompt-medium.txt` (~229 tok) | **llama.cpp (Vulkan2)** | 21,8 | 10 474,6 | 42,8 | 443,6 | 2,25 | 3 823,5 | 0,8 % |
-| `prompt-large.txt` (~612 tok) | **dotLLM (hip:gfx1100)** | 184,5 | 3 311,1 | 105,6 | 180,0 | 5,28 | 2 175,1 | 0,8 % |
-| `prompt-large.txt` (~612 tok) | **llama.cpp (ROCm0)** | 50,3 | 12 172,6 | 59,5 | 319,1 | 3,13 | 5 745,2 | 0,4 % |
-| `prompt-large.txt` (~612 tok) | **llama.cpp (Vulkan2)** | 42,5 | 14 381,4 | 43,0 | 442,0 | 2,26 | 7 377,5 | 1,2 % |
+| `prompt-medium.txt` (~229 tok) | **dotLLM (hip:gfx1100)** | 99,9 | 2 291,3 | 697,7 | 182,0 | 5,45 | 447,6 | 1,0 % |
+| `prompt-medium.txt` (~228 tok) | **llama.cpp (ROCm0)** | 32,5 | 7 012,6 | 396,7 | 320,1 | 3,12 | 827,1 | 0,2 % |
+| `prompt-medium.txt` (~228 tok) | **llama.cpp (Vulkan2)** | 22,2 | 10 250,0 | 233,3 | 445,9 | 2,24 | 1 299,4 | 0,3 % |
+| `prompt-large.txt` (~611 tok) | **dotLLM (hip:gfx1100)** | 185,7 | 3 290,0 | 692,8 | 183,3 | 5,41 | 841,2 | 0,6 % |
+| `prompt-large.txt` (~612 tok) | **llama.cpp (ROCm0)** | 50,2 | 12 194,1 | 394,1 | 322,3 | 3,10 | 1 663,5 | 0,3 % |
+| `prompt-large.txt` (~612 tok) | **llama.cpp (Vulkan2)** | 43,5 | 14 085,2 | 286,0 | 444,0 | 2,25 | 2 242,9 | 0,4 % |
 
 ### 6.2 Llama-3.2-1B-Instruct Q4_K_M
 
 | Prompt | Motor | Prefill ms | Prefill tok/s | Decode ms | Decode tok/s | ms/tok | Totalt tok/s | CV |
 |---|---|---:|---:|---:|---:|---:|---:|---:|
-| `prompt-medium.txt` (~228 tok) | **dotLLM (hip:gfx1100)** | 107,2 | 2 135,6 | 51,0 | 372,6 | 2,55 | 1 574,0 | 2,7 % |
-| `prompt-medium.txt` (~228 tok) | **llama.cpp (ROCm0)** | 112,1 | 2 034,2 | 50,9 | 373,0 | 2,68 | 1 515,1 | 1,1 % |
-| `prompt-medium.txt` (~228 tok) | **llama.cpp (Vulkan2)** | 25,8 | 8 834,5 | 33,7 | 563,9 | 1,77 | 4 150,6 | 0,9 % |
-| `prompt-large.txt` (~612 tok) | **dotLLM (hip:gfx1100)** | 185,9 | 3 286,2 | 50,9 | 373,2 | 2,54 | 2 664,7 | 0,8 % |
-| `prompt-large.txt` (~612 tok) | **llama.cpp (ROCm0)** | 137,1 | 4 465,5 | 48,8 | 389,2 | 2,57 | 3 394,8 | 1,1 % |
-| `prompt-large.txt` (~612 tok) | **llama.cpp (Vulkan2)** | 50,9 | 12 027,6 | 34,0 | 559,6 | 1,79 | 7 438,4 | 1,5 % |
+| `prompt-medium.txt` (~229 tok) | **dotLLM (hip:gfx1100)** | 105,4 | 2 172,9 | 313,5 | 405,2 | 2,45 | 852,2 | 1,3 % |
+| `prompt-medium.txt` (~228 tok) | **llama.cpp (ROCm0)** | 114,8 | 1 985,5 | 320,6 | 396,2 | 2,52 | 815,3 | 4,4 % |
+| `prompt-medium.txt` (~228 tok) | **llama.cpp (Vulkan2)** | 25,7 | 8 873,7 | 222,3 | 571,4 | 1,75 | 1 431,6 | 0,2 % |
+| `prompt-large.txt` (~611 tok) | **dotLLM (hip:gfx1100)** | 187,7 | 3 255,2 | 314,3 | 404,1 | 2,46 | 1 472,1 | 1,0 % |
+| `prompt-large.txt` (~612 tok) | **llama.cpp (ROCm0)** | 141,3 | 4 330,1 | 320,5 | 396,3 | 2,52 | 1 600,2 | 0,8 % |
+| `prompt-large.txt` (~612 tok) | **llama.cpp (Vulkan2)** | 52,2 | 11 712,9 | 223,6 | 567,9 | 1,76 | 2 678,9 | 1,2 % |
 
-### 6.3 Analys av baseline
-1. **Decode (Q4_K_M):** dotLLM når **372,6–373,2 tok/s**, vilket är **100 % i paritet med llama.cpp HIP** (**373,0–389,2 tok/s**) redan före Fas 3-optimeringarna (mmvq, graph, split-KV).
-2. **Decode (Q8_0):** dotLLM når **180,0–181,8 tok/s** mot llama.cpp HIP:s **310,2–319,1 tok/s**. Här kommer Fas 3-fusion och mmvq (H3.1–H3.2) att stänga gapet.
-3. **Prefill:** dotLLM slår llama.cpp HIP på Q4_K_M medium (2 135,6 vs 2 034,2 tok/s). Vid längre sekvenser drar llama.cpp ifrån tack vare WMMA-prefill, vilket är det uttryckliga målet för Fas 4 (H4.1–H4.4).
+### 6.3 Llama-3.1-8B-Instruct Q4_K_M (M3 Baseline)
+
+Mätt med `prompt-medium.txt` (~228 tokens prompt) och 128 genererade tokens:
+
+| Motor | Prefill ms | Prefill tok/s | Decode ms | Decode tok/s | ms/tok | Effektiv GB/s | Andel roofline | CV |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| **dotLLM (hip:gfx1100)** | 230,8 | 992,2 | 1 397,2 | **90,9** | 10,92 | **418,1** | **49,5 %** | 0,4 % |
+| **llama.cpp (ROCm0)** | 177,1 | 1 287,5 | 1 022,4 | **124,2** | 8,05 | **571,4** | **67,6 %** | 0,5 % |
+| **llama.cpp (Vulkan2)** | 114,6 | 1 989,2 | 895,1 | **141,9** | 7,05 | **652,7** | **77,2 %** | 0,3 % |
+
+*Roofline-referens: 845 GB/s (H0.3), faktiskt lästa viktbytes per token ≈ 4,60 GB (exkl. `token_embd`) ⇒ 183,7 tok/s.*
+
+### 6.4 Korrekthet (M2)
+
+`Category=GPU-AMD`: **61/61 gröna, 0 skippade** (oberoende omkörning 2026-10-13, 41 s). `HipDecodeDebugTest` jämför 64 greedy-tokens mot CPU för alla fem modeller och går igenom alla enheter som `HipDevice.GetSupportedDevices()` returnerar, alltså både `gfx1100` och `gfx1201`. M2:s korrekthetsgate är uppfylld.
+
+### 6.5 Analys av baseline (H2.7b)
+
+1. **8B Q4_K_M (M3-modellen) är den verkliga baselinen för kernel-prestanda:**
+   - dotLLM uppnår **90,9 tok/s** (418,1 GB/s, 49,5 % av roofline).
+   - llama.cpp-HIP uppnår **124,2 tok/s** (571,4 GB/s, 67,6 % av roofline).
+   - llama.cpp-Vulkan uppnår **141,9 tok/s** (652,7 GB/s, 77,2 % av roofline).
+   - M3-gaten kräver ≥ 70 % av roofline (≈ 128 tok/s) **och** ≥ llama.cpp-HIP (124,2 tok/s). Sträckmålet är 80 % (≈ 146 tok/s). Gapet som Fas 3 ska stänga är alltså från 91 tok/s till ≥ 128 tok/s (+41 %).
+2. **1B-modellerna bekräftar launch-overhead-begränsningen:**
+   - På 1B Q4_K_M matchar (och marginellt slår) dotLLM llama.cpp-HIP (405 mot 396 tok/s), men båda fastnar på ~310 GB/s (~37 % av referensbandbredden).
+   - Detta visar tydligt varför 1B inte duger som prestandamått för minnesbandbredd: små matriser gör att kernel-launch latency och synk dominerar körtiden.
+3. **Q8_0 decode har det största absoluta gapet:**
+   - dotLLM 182 tok/s mot llama.cpp-HIP 320 tok/s och Vulkan 446 tok/s på 1B.
+   - Detta motiverar den separata delgaten för Q8_0 i H3.2 (≥ 80 % av H0.3-bandbredden).
+4. **Prefill:**
+   - dotLLM gör ~2 200–3 300 tok/s på 1B och 992 tok/s på 8B.
+   - llama.cpp-HIP gör ~7 000–12 000 tok/s på Q8_0 och 1 287 tok/s på 8B Q4_K_M.
+   - llama.cpp-Vulkan leder prefill markant (10 000–14 000 tok/s på 1B, 1 989 tok/s på 8B). Fas 4 (WMMA fused dequant-GEMM och flash attention) kommer att adressera detta gap.
+
 
 ## 7. ISA-resursrapport och profileringsverktyg (H2.8)
 

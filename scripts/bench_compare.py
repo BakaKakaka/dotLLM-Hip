@@ -798,10 +798,16 @@ def run_dotllm_cli(
     dc_cv = (stdev(decode_tok_s_list) / (sum(decode_tok_s_list) / len(decode_tok_s_list))) if len(decode_tok_s_list) >= 2 else 0
     pf_cv = (stdev(prefill_tok_s_list) / (sum(prefill_tok_s_list) / len(prefill_tok_s_list))) if len(prefill_tok_s_list) >= 2 else 0
 
-    total_ms = best_pf_ms + best_dc_ms
+    use_med = kwargs.get("median", False)
+    disp_pf_tok_s = med_pf_tok_s if use_med else best_pf_tok_s
+    disp_dc_tok_s = med_dc_tok_s if use_med else best_dc_tok_s
+    disp_pf_ms = med_pf_ms if use_med else best_pf_ms
+    disp_dc_ms = med_dc_ms if use_med else best_dc_ms
+
+    total_ms = disp_pf_ms + disp_dc_ms
     total_tokens = prefill_tokens + decode_tokens
     total_tok_s = total_tokens / (total_ms / 1000.0) if total_ms > 0 else 0
-    ms_per_tok = best_dc_ms / decode_tokens if decode_tokens > 0 else 0
+    ms_per_tok = disp_dc_ms / decode_tokens if decode_tokens > 0 else 0
 
     if gpu_layers is not None:
         hybrid_pct = kwargs.get("hybrid_pct")
@@ -817,12 +823,12 @@ def run_dotllm_cli(
     return [EngineResult(
         engine=engine_label,
         model=model_name,
-        prefill_ms=best_pf_ms,
-        decode_ms=best_dc_ms,
+        prefill_ms=disp_pf_ms,
+        decode_ms=disp_dc_ms,
         prefill_tokens=prefill_tokens,
         decode_tokens=decode_tokens,
-        prefill_tok_per_sec=best_pf_tok_s,
-        decode_tok_per_sec=best_dc_tok_s,
+        prefill_tok_per_sec=disp_pf_tok_s,
+        decode_tok_per_sec=disp_dc_tok_s,
         decode_ms_per_tok=ms_per_tok,
         total_tok_per_sec=total_tok_s,
         median_prefill_tok_per_sec=med_pf_tok_s,
@@ -1025,10 +1031,16 @@ def run_llamacpp(
     dc_cv = (stdev(decode_tok_s_list) / (sum(decode_tok_s_list) / len(decode_tok_s_list))) if len(decode_tok_s_list) >= 2 else 0
     pf_cv = (stdev(prefill_tok_s_list) / (sum(prefill_tok_s_list) / len(prefill_tok_s_list))) if len(prefill_tok_s_list) >= 2 else 0
 
-    total_ms = best_pf_ms + best_dc_ms
+    use_med = kwargs.get("median", False)
+    disp_pf_tok_s = med_pf_tok_s if use_med else best_pf_tok_s
+    disp_dc_tok_s = med_dc_tok_s if use_med else best_dc_tok_s
+    disp_pf_ms = med_pf_ms if use_med else best_pf_ms
+    disp_dc_ms = med_dc_ms if use_med else best_dc_ms
+
+    total_ms = disp_pf_ms + disp_dc_ms
     total_tokens = pf_tok + dc_tok
     total_tok_s = total_tokens / (total_ms / 1000.0) if total_ms > 0 else 0
-    ms_per_tok = best_dc_ms / dc_tok if dc_tok > 0 else 0
+    ms_per_tok = disp_dc_ms / dc_tok if dc_tok > 0 else 0
 
     if llamacpp_device:
         engine_label = f"llama.cpp ({llamacpp_device})"
@@ -1040,12 +1052,12 @@ def run_llamacpp(
     return [EngineResult(
         engine=engine_label,
         model=model_name,
-        prefill_ms=best_pf_ms,
-        decode_ms=best_dc_ms,
+        prefill_ms=disp_pf_ms,
+        decode_ms=disp_dc_ms,
         prefill_tokens=pf_tok,
         decode_tokens=dc_tok,
-        prefill_tok_per_sec=best_pf_tok_s,
-        decode_tok_per_sec=best_dc_tok_s,
+        prefill_tok_per_sec=disp_pf_tok_s,
+        decode_tok_per_sec=disp_dc_tok_s,
         decode_ms_per_tok=ms_per_tok,
         total_tok_per_sec=total_tok_s,
         median_prefill_tok_per_sec=med_pf_tok_s,
@@ -1068,7 +1080,7 @@ ENGINES: dict[str, callable] = {
 }
 
 
-def print_comparison(results: list[EngineResult], prompt: str, max_tokens: int) -> None:
+def print_comparison(results: list[EngineResult], prompt: str, max_tokens: int, use_median: bool = False) -> None:
     """Print a formatted comparison table, supporting multiple models."""
     if not results:
         print("No results to display.")
@@ -1154,7 +1166,10 @@ def print_comparison(results: list[EngineResult], prompt: str, max_tokens: int) 
     if has_ratios:
         print(sep)
 
-    print("All values are best-of-N (max tok/s, min ms). CV is the coefficient of variation")
+    if use_median:
+        print("All values are median across runs after warmup. CV is the coefficient of variation")
+    else:
+        print("All values are best-of-N (max tok/s, min ms). CV is the coefficient of variation")
     print("across runs — lower means more stable; deltas smaller than CV are likely noise.")
     print()
 
@@ -1175,7 +1190,7 @@ def _split_model_quant(model: str) -> tuple[str, str]:
     return model, "?"
 
 
-def print_pivoted_summary(results: list[EngineResult]) -> None:
+def print_pivoted_summary(results: list[EngineResult], use_median: bool = False) -> None:
     """Print three pivoted summary tables: prefill latency, prefill throughput, decode throughput.
 
     Each table has one row per model, columns grouped by engine/mode.
@@ -1351,7 +1366,10 @@ def print_pivoted_summary(results: list[EngineResult]) -> None:
     _print_table("Decode Throughput (tok/s)", "* = fastest (highest)",
                  True, lambda r: r.decode_tok_per_sec)
 
-    print("  Best-of-N values across runs.")
+    if use_median:
+        print("  Median values across runs (CV reported per engine).")
+    else:
+        print("  Best-of-N values across runs.")
     print()
 
 
@@ -1525,6 +1543,8 @@ def main() -> int:
                              "Required if >1 GPU is detected in --list-devices to prevent multi-GPU split (W17).")
     parser.add_argument("--cli", action="store_true",
                         help="Run dotLLM via CLI executable instead of BenchmarkDotNet harness")
+    parser.add_argument("--median", action="store_true",
+                        help="Report median across runs instead of best-of-N (mandatory per M3)")
     parser.add_argument("--hybrid-modes", type=str, default=None,
                         help="Comma-separated fractions (0-1) of layers to offload to GPU. "
                              "E.g. '0.25,0.5,0.75' runs hybrid mode at 25%%, 50%%, 75%% of layers. "
@@ -1667,6 +1687,7 @@ def main() -> int:
                     runtimes=args.runtimes,
                     llamacpp_device=args.llamacpp_device,
                     cli=args.cli,
+                    median=args.median,
                 )
                 all_results.extend(results)
 
@@ -1688,11 +1709,12 @@ def main() -> int:
                         runs=args.runs,
                         gpu_layers=gl,
                         hybrid_pct=pct,
+                        median=args.median,
                     )
                     all_results.extend(results)
 
-    print_comparison(all_results, prompt, args.tokens)
-    print_pivoted_summary(all_results)
+    print_comparison(all_results, prompt, args.tokens, use_median=args.median)
+    print_pivoted_summary(all_results, use_median=args.median)
 
     if args.export_json:
         export_results_json(

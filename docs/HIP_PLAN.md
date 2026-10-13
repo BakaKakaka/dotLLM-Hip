@@ -194,15 +194,25 @@ graph TD
   - **Ett kort per körning (W17):** `-dev` väljs genom att matcha kortnamnet i `--list-devices`. I dag blir det `ROCm0` och `Vulkan2` för 7900 XTX. Fördelning över flera kort ger en ogiltig baseline.
   - Den befintliga [`scripts/bench_compare.py`](../scripts/bench_compare.py) används med `--llamacpp-bin "$env:DOTLLM_LLAMACPP_HIP\llama-completion.exe"` (resp. `_VULKAN`). Den globala `LLAMACPP_BIN` sätts **inte**, eftersom den bara kan peka på en backend.
   - **Kodändring i H2.7:** `bench_compare.py` skickar i dag bara `-ngl 99` och inget `-dev`, så llama.cpp delas över båda korten. Lägg till `--llamacpp-device <namn>`, som skickas vidare som `-dev`. Saknas flaggan och fler än en GPU syns i `--list-devices` ska skriptet fallera (W17). dotLLM-sidan körs med `--device hip:gfx1100`.
-- **Status (2026-10-13):** Klar. `HipLogitComparisonTest` och `HipDecodeDebugTest` (64 tokens greedy) verifierade och gröna på både `gfx1100` och `gfx1201` över samtliga 5 modeller (SmolLM-135M Q8_0, Qwen2.5-0.5B Q8_0, Qwen3-0.6B Q8_0, Llama-3.2-1B Q8_0 och Q4_K_M). `--llamacpp-device` med W17-kontroll och `--cli` implementerade i `scripts/bench_compare.py`. Baseline-mätningar på 7900 XTX körda mot llama.cpp HIP (`ROCm0`) och Vulkan (`Vulkan2`) med `prompt-medium.txt` och `prompt-large.txt` och dokumenterade i `docs/HIP.md §6`.
+- **Status (2026-10-13):** Klar. `HipLogitComparisonTest` och `HipDecodeDebugTest` (64 tokens greedy) verifierade och gröna på både `gfx1100` och `gfx1201` över samtliga 5 modeller (SmolLM-135M Q8_0, Qwen2.5-0.5B Q8_0, Qwen3-0.6B Q8_0, Llama-3.2-1B Q8_0 och Q4_K_M). `--llamacpp-device` med W17-kontroll och `--cli` implementerade i `scripts/bench_compare.py`.
+- **H2.7b ommätning och 8B-baseline (Klar 2026-10-13):**
+  - Ommätning genomförd med M3-regeln (128 genererade tokens, median av 5 körningar efter uppvärmning, CV redovisas; ingen best-of-N).
+  - Llama-3.2-1B Q8_0 och Q4_K_M ommätta för medium och large prompt mot llama.cpp-HIP och llama.cpp-Vulkan.
+  - Llama-3.1-8B Q4_K_M (M3-modellen) mätt med `prompt-medium.txt`:
+    - dotLLM: 90,9 tok/s (418,1 GB/s, 49,5 % av roofline, CV 0,4 %)
+    - llama.cpp-HIP: 124,2 tok/s (571,4 GB/s, 67,6 % av roofline, CV 0,5 %)
+    - llama.cpp-Vulkan: 141,9 tok/s (652,7 GB/s, 77,2 % av roofline, CV 0,3 %)
+  - Resultat och fullständig analys inlagda i `docs/HIP.md §6`. Gapet till M3-gaten (≥ 70 % roofline ≈ 128 tok/s och ≥ llama.cpp-HIP 124 tok/s) är fastställt och redo att stängas i Fas 3.
 
 ### H2.8 Profileringsverktyg (förutsättning för fas 3, blockerar inte fas 1–2)
 - **Verifierat 2026-10-13:**
   - RDTS 2026-10-02 (RGP 2.7.1, RDP 3.5.1, RGA 2.15.0) är portabel och kräver ingen installation. Placeringen styrs av W16.
   - RGP:s README anger **HIP och OpenCL på Windows 11** för RX 7000/9000.
   - **RGA binary mode fungerar på våra code objects** för båda arkitekturerna. Bundlen packas först upp med `clang-offload-bundler --unbundle` (§4 i HIP_PITFALLS), sedan körs `rga -s bin -a stats.csv --isa isa.txt --livereg livereg.txt <elf>`. Utdata: använda VGPR/SGPR, spills, LDS, ISA och live-VGPR per instruktion.
-  - Skriptet `scripts/hip-isa-report.ps1` implementerat och körs för automatisk ISA-resursrapport (VGPR, SGPR, spills, LDS, ISA-storlek) över alla kernels för `gfx1100` och `gfx1201`.
-- **Status (2026-10-13):** Klar. `scripts/hip-isa-report.ps1` genererar fullständig ISA-resursrapport med 0 registerspills över alla kernels för båda arkitekturerna. Dokumenterat i `docs/HIP.md §7`.
+  - Skriptet `scripts/hip-isa-report.ps1` implementerat och körs för automatisk ISA-resursrapport (VGPR, SGPR, spills, LDS, ISA-storlek) över alla kernels för `gfx1100` och `gfx1201`. 0 registerspills över samtliga kernels.
+  - **RGP-fångst på Windows 11 verifierad:** Genomfört via `RadeonDeveloperPanelCLI.exe` i profileringsläge mot HIP apphost-binärer (`DotLLM.Hip.Spikes.exe` och `DotLLM.Cli.exe`). Drivrutinen anslöt automatiskt, startade trace och sparade giltiga `.rgp`-profiler (`benchmarks/dotllm_cli_inference.rgp`, 568 KB, och `benchmarks/rgp_capture.rgp`, 82 KB) med dispatchar, kerneltider och occupancy insamlade. Arbetsflödet är dokumenterat i `docs/HIP.md §5.3`.
+- **Status (2026-10-13):** Klar. Både RGA-analys (0 spills) och RGP-profilering är fullt fungerande och verifierade.
+
 
 ---
 
@@ -211,7 +221,7 @@ graph TD
 | Paket | Innehåll | Acceptans |
 |---|---|---|
 | H3.1 | QKV i en launch (bias, QK-norm, RoPE och KV-skrivning i epilogen). Gate+Up med SwiGLU-epilog. HIP Graph för decode, där position och `seqKv` läses från device-minne – **P1 enligt H0.2**, görs bara om fusionen inte räcker. | ≤ 6 launches per lager. CPU-tid < 10 % av GPU-tiden per token. |
-| H3.2 | `quantize_q8_1` en gång per indatavektor. mmvq-GEMV per format: wave/rad, 16 B/lane, `sudot4`/`sudot8`. Variant med `fdot2` benchmarkas och den bästa väljs per format. Referens: llama.cpp `mmvq.cu`/`vecdotq.cuh` (MIT, attribution). | 4096×14336 Q4_K ≥ 80 % av H0.3-bandbredden. CPU-tolerans OK. |
+| H3.2 | `quantize_q8_1` en gång per indatavektor. mmvq-GEMV per format: wave/rad, 16 B/lane, `sudot4`/`sudot8`. Variant med `fdot2` benchmarkas och den bästa väljs per format. Referens: llama.cpp `mmvq.cu`/`vecdotq.cuh` (MIT, attribution). | 4096×14336 **Q4_K och Q8_0** ≥ 80 % av H0.3-bandbredden (≥ 676 GB/s på 7900 XTX), mätt separat per format. CPU-tolerans OK. Q8_0 har en egen gate eftersom M2-baselinen visar störst gap där (dotLLM 181 mot llama.cpp-HIP 310 tok/s på 1B, ≈ 230 GB/s effektivt). |
 | H3.3 | Repack på device: skalor separeras från kvantdata, 16 B-alignment (Q8_0, Q5_0, Q6_K). | Mätbar vinst, annars bakom flagga. |
 | H3.4 | Flash-decoding: split-KV, en workgroup per KV-head (GQA-delning). | Attention ≤ 15 % av decode-tiden vid 8K kontext. |
 | H3.5 | Non-temporal-laddningar av vikter. | Behålls bara vid mätbar vinst (H0.3). |
@@ -220,6 +230,7 @@ graph TD
 - **Roofline** = referensbandbredd (H0.3-regeln) / **faktiskt lästa bytes per token**. Det är summan av alla vikttensorer som läses per token, beräknad ur GGUF av benchmark-harnessen. `token_embd` räknas inte, eftersom bara en rad läses. För Llama-3.1-8B Q4_K_M blir det ≈ 4,6 GB och roofline ≈ **183 tok/s** på 7900 XTX.
 - **Mätning:** decode-tok/s över 128 genererade tokens efter `prompt-medium.txt`, så att KV-trafiken är försumbar. Median av 5 körningar efter uppvärmning.
 - **Gate:** ≥ **70 % av roofline** (≈ 128 tok/s) **och** ≥ llama.cpp-HIP på samma maskin och modellfil. **Sträckmål:** 80 % (≈ 146 tok/s).
+- **Referens llama.cpp-Vulkan (beslut 2026-10-13):** Alla prestandatabeller redovisar llama.cpp-Vulkan i samma byggnummer bredvid llama.cpp-HIP. Vulkan var ~50 % snabbare än llama.cpp-HIP på decode och 3–4× snabbare på prefill i M2-baselinen, och det är vad Radeon-användare på Windows faktiskt kör. **≥ llama.cpp-Vulkan är ett sträckmål, inte ett krav** för M3.
 - Korrekthetsgaten från M2 är grön på båda korten.
 
 ---

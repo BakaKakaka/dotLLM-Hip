@@ -1,0 +1,737 @@
+{
+  "1B_Q8_0|medium|dotllm": {
+    "engine": "dotLLM (hip:gfx1100)",
+    "model": "Llama-3.2-1B-Instruct-Q8_0",
+    "prefill_ms": 99.9,
+    "decode_ms": 697.7,
+    "prefill_tokens": 229,
+    "decode_tokens": 128,
+    "prefill_tok_per_sec": 2291.34,
+    "decode_tok_per_sec": 182.04,
+    "decode_ms_per_tok": 5.45078125,
+    "total_tok_per_sec": 447.59277833500505,
+    "bdn_mean_ns": null,
+    "bdn_stddev_ns": null,
+    "median_prefill_tok_per_sec": 2291.34,
+    "median_decode_tok_per_sec": 182.04,
+    "median_prefill_ms": 99.9,
+    "median_decode_ms": 697.7,
+    "decode_cv": 0.00998536062638914,
+    "prefill_cv": 0.05425541891349382,
+    "all_decode_tok_per_sec": [
+      182.01,
+      180.75,
+      183.66,
+      182.04,
+      185.48
+    ],
+    "all_prefill_tok_per_sec": [
+      2291.34,
+      2234.7,
+      2040.93,
+      2321.19,
+      2343.6
+    ],
+    "all_decode_ms": [
+      697.7,
+      702.6,
+      691.5,
+      697.7,
+      684.7
+    ],
+    "all_prefill_ms": [
+      99.9,
+      102.5,
+      112.2,
+      98.7,
+      97.7
+    ],
+    "runtime": null
+  },
+  "1B_Q8_0|medium|llamacpp_hip": {
+    "engine": "llama.cpp (ROCm0)",
+    "model": "Llama-3.2-1B-Instruct-Q8_0",
+    "prefill_ms": 32.51,
+    "decode_ms": 396.72,
+    "prefill_tokens": 228,
+    "decode_tokens": 127,
+    "prefill_tok_per_sec": 7012.58,
+    "decode_tok_per_sec": 320.13,
+    "decode_ms_per_tok": 3.1237795275590554,
+    "total_tok_per_sec": 827.0624140903478,
+    "bdn_mean_ns": null,
+    "bdn_stddev_ns": null,
+    "median_prefill_tok_per_sec": 7012.58,
+    "median_decode_tok_per_sec": 320.13,
+    "median_prefill_ms": 32.51,
+    "median_decode_ms": 396.72,
+    "decode_cv": 0.001969603975291473,
+    "prefill_cv": 0.006681623226373534,
+    "all_decode_tok_per_sec": [
+      320.13,
+      319.95,
+      321.37,
+      319.78,
+      320.13
+    ],
+    "all_prefill_tok_per_sec": [
+      7043.56,
+      7000.74,
+      7052.06,
+      6933.88,
+      7012.58
+    ],
+    "all_decode_ms": [
+      396.72,
+      396.93,
+      395.18,
+      397.15,
+      396.71
+    ],
+    "all_prefill_ms": [
+      32.37,
+      32.57,
+      32.33,
+      32.88,
+      32.51
+    ],
+    "runtime": null
+  },
+  "1B_Q8_0|medium|llamacpp_vulkan": {
+    "engine": "llama.cpp (Vulkan2)",
+    "model": "Llama-3.2-1B-Instruct-Q8_0",
+    "prefill_ms": 22.24,
+    "decode_ms": 233.26,
+    "prefill_tokens": 228,
+    "decode_tokens": 104,
+    "prefill_tok_per_sec": 10249.96,
+    "decode_tok_per_sec": 445.85,
+    "decode_ms_per_tok": 2.2428846153846154,
+    "total_tok_per_sec": 1299.412915851272,
+    "bdn_mean_ns": null,
+    "bdn_stddev_ns": null,
+    "median_prefill_tok_per_sec": 10249.96,
+    "median_decode_tok_per_sec": 445.85,
+    "median_prefill_ms": 22.24,
+    "median_decode_ms": 233.26,
+    "decode_cv": 0.0031107417601918008,
+    "prefill_cv": 0.010882153210046147,
+    "all_decode_tok_per_sec": [
+      444.4,
+      445.67,
+      445.85,
+      447.3,
+      447.89
+    ],
+    "all_prefill_tok_per_sec": [
+      10127.03,
+      10036.54,
+      10249.96,
+      10261.95,
+      10304.62
+    ],
+    "all_decode_ms": [
+      234.02,
+      233.36,
+      233.26,
+      232.51,
+      232.2
+    ],
+    "all_prefill_ms": [
+      22.51,
+      22.72,
+      22.24,
+      22.22,
+      22.13
+    ],
+    "runtime": null
+  },
+  "1B_Q8_0|large|dotllm": {
+    "engine": "dotLLM (hip:gfx1100)",
+    "model": "Llama-3.2-1B-Instruct-Q8_0",
+    "prefill_ms": 185.7,
+    "decode_ms": 692.8,
+    "prefill_tokens": 611,
+    "decode_tokens": 128,
+    "prefill_tok_per_sec": 3289.99,
+    "decode_tok_per_sec": 183.31,
+    "decode_ms_per_tok": 5.4125,
+    "total_tok_per_sec": 841.2066021627775,
+    "bdn_mean_ns": null,
+    "bdn_stddev_ns": null,
+    "median_prefill_tok_per_sec": 3289.99,
+    "median_decode_tok_per_sec": 183.31,
+    "median_prefill_ms": 185.7,
+    "median_decode_ms": 692.8,
+    "decode_cv": 0.006334679428008812,
+    "prefill_cv": 0.004613111477800281,
+    "all_decode_tok_per_sec": [
+      183.54,
+      183.31,
+      184.5,
+      181.31,
+      183.19
+    ],
+    "all_prefill_tok_per_sec": [
+      3289.99,
+      3263.16,
+      3293,
+      3302.86,
+      3279.01
+    ],
+    "all_decode_ms": [
+      691.9,
+      692.8,
+      688.4,
+      700.5,
+      693.3
+    ],
+    "all_prefill_ms": [
+      185.7,
+      187.2,
+      185.5,
+      185,
+      186.3
+    ],
+    "runtime": null
+  },
+  "1B_Q8_0|large|llamacpp_hip": {
+    "engine": "llama.cpp (ROCm0)",
+    "model": "Llama-3.2-1B-Instruct-Q8_0",
+    "prefill_ms": 50.19,
+    "decode_ms": 394.06,
+    "prefill_tokens": 612,
+    "decode_tokens": 127,
+    "prefill_tok_per_sec": 12194.15,
+    "decode_tok_per_sec": 322.29,
+    "decode_ms_per_tok": 3.1028346456692915,
+    "total_tok_per_sec": 1663.4777715250423,
+    "bdn_mean_ns": null,
+    "bdn_stddev_ns": null,
+    "median_prefill_tok_per_sec": 12194.15,
+    "median_decode_tok_per_sec": 322.29,
+    "median_prefill_ms": 50.19,
+    "median_decode_ms": 394.06,
+    "decode_cv": 0.003161707443530679,
+    "prefill_cv": 0.005400080969509582,
+    "all_decode_tok_per_sec": [
+      322.29,
+      322.81,
+      322.14,
+      320.58,
+      323.27
+    ],
+    "all_prefill_tok_per_sec": [
+      12194.15,
+      12256.67,
+      12224.6,
+      12088.41,
+      12150.09
+    ],
+    "all_decode_ms": [
+      394.06,
+      393.42,
+      394.23,
+      396.15,
+      392.86
+    ],
+    "all_prefill_ms": [
+      50.19,
+      49.93,
+      50.06,
+      50.63,
+      50.37
+    ],
+    "runtime": null
+  },
+  "1B_Q8_0|large|llamacpp_vulkan": {
+    "engine": "llama.cpp (Vulkan2)",
+    "model": "Llama-3.2-1B-Instruct-Q8_0",
+    "prefill_ms": 43.45,
+    "decode_ms": 286.04,
+    "prefill_tokens": 612,
+    "decode_tokens": 127,
+    "prefill_tok_per_sec": 14085.16,
+    "decode_tok_per_sec": 444.0,
+    "decode_ms_per_tok": 2.252283464566929,
+    "total_tok_per_sec": 2242.8601778506177,
+    "bdn_mean_ns": null,
+    "bdn_stddev_ns": null,
+    "median_prefill_tok_per_sec": 14085.16,
+    "median_decode_tok_per_sec": 444.0,
+    "median_prefill_ms": 43.45,
+    "median_decode_ms": 286.04,
+    "decode_cv": 0.00367803686274329,
+    "prefill_cv": 0.007583092044052909,
+    "all_decode_tok_per_sec": [
+      444.0,
+      444.7,
+      444.67,
+      440.76,
+      443.86
+    ],
+    "all_prefill_tok_per_sec": [
+      14233.55,
+      13994.65,
+      14085.16,
+      14075.76,
+      14239.51
+    ],
+    "all_decode_ms": [
+      286.04,
+      285.58,
+      285.61,
+      288.14,
+      286.13
+    ],
+    "all_prefill_ms": [
+      43.0,
+      43.73,
+      43.45,
+      43.48,
+      42.98
+    ],
+    "runtime": null
+  },
+  "1B_Q4_K_M|medium|dotllm": {
+    "engine": "dotLLM (hip:gfx1100)",
+    "model": "Llama-3.2-1B-Instruct-Q4_K_M",
+    "prefill_ms": 105.4,
+    "decode_ms": 313.5,
+    "prefill_tokens": 229,
+    "decode_tokens": 128,
+    "prefill_tok_per_sec": 2172.94,
+    "decode_tok_per_sec": 405.16,
+    "decode_ms_per_tok": 2.44921875,
+    "total_tok_per_sec": 852.2320362855097,
+    "bdn_mean_ns": null,
+    "bdn_stddev_ns": null,
+    "median_prefill_tok_per_sec": 2172.94,
+    "median_decode_tok_per_sec": 405.16,
+    "median_prefill_ms": 105.4,
+    "median_decode_ms": 313.5,
+    "decode_cv": 0.012591704126921002,
+    "prefill_cv": 0.004299745259995918,
+    "all_decode_tok_per_sec": [
+      395.15,
+      406.73,
+      407.86,
+      402.35,
+      405.16
+    ],
+    "all_prefill_tok_per_sec": [
+      2175.24,
+      2167.16,
+      2191.59,
+      2172.94,
+      2171.6
+    ],
+    "all_decode_ms": [
+      321.4,
+      312.2,
+      311.4,
+      315.6,
+      313.5
+    ],
+    "all_prefill_ms": [
+      105.3,
+      105.7,
+      104.5,
+      105.4,
+      105.5
+    ],
+    "runtime": null
+  },
+  "1B_Q4_K_M|medium|llamacpp_hip": {
+    "engine": "llama.cpp (ROCm0)",
+    "model": "Llama-3.2-1B-Instruct-Q4_K_M",
+    "prefill_ms": 114.83,
+    "decode_ms": 320.57,
+    "prefill_tokens": 228,
+    "decode_tokens": 127,
+    "prefill_tok_per_sec": 1985.54,
+    "decode_tok_per_sec": 396.17,
+    "decode_ms_per_tok": 2.5241732283464566,
+    "total_tok_per_sec": 815.3422140560405,
+    "bdn_mean_ns": null,
+    "bdn_stddev_ns": null,
+    "median_prefill_tok_per_sec": 1985.54,
+    "median_decode_tok_per_sec": 396.17,
+    "median_prefill_ms": 114.83,
+    "median_decode_ms": 320.57,
+    "decode_cv": 0.043864271898470295,
+    "prefill_cv": 0.030260316318406522,
+    "all_decode_tok_per_sec": [
+      397.37,
+      396.17,
+      357.82,
+      391.53,
+      396.98
+    ],
+    "all_prefill_tok_per_sec": [
+      1985.54,
+      1997.98,
+      1893.55,
+      1933.76,
+      2047.93
+    ],
+    "all_decode_ms": [
+      319.6,
+      320.57,
+      354.92,
+      324.37,
+      319.92
+    ],
+    "all_prefill_ms": [
+      114.83,
+      114.12,
+      120.41,
+      117.91,
+      111.33
+    ],
+    "runtime": null
+  },
+  "1B_Q4_K_M|medium|llamacpp_vulkan": {
+    "engine": "llama.cpp (Vulkan2)",
+    "model": "Llama-3.2-1B-Instruct-Q4_K_M",
+    "prefill_ms": 25.69,
+    "decode_ms": 222.28,
+    "prefill_tokens": 228,
+    "decode_tokens": 127,
+    "prefill_tok_per_sec": 8873.67,
+    "decode_tok_per_sec": 571.35,
+    "decode_ms_per_tok": 1.7502362204724409,
+    "total_tok_per_sec": 1431.6247933217728,
+    "bdn_mean_ns": null,
+    "bdn_stddev_ns": null,
+    "median_prefill_tok_per_sec": 8873.67,
+    "median_decode_tok_per_sec": 571.35,
+    "median_prefill_ms": 25.69,
+    "median_decode_ms": 222.28,
+    "decode_cv": 0.0018770080655993782,
+    "prefill_cv": 0.012579361638118736,
+    "all_decode_tok_per_sec": [
+      569.08,
+      571.59,
+      571.32,
+      571.58,
+      571.35
+    ],
+    "all_prefill_tok_per_sec": [
+      9002.25,
+      8873.67,
+      9001.9,
+      8834.81,
+      8743.0
+    ],
+    "all_decode_ms": [
+      223.17,
+      222.19,
+      222.29,
+      222.19,
+      222.28
+    ],
+    "all_prefill_ms": [
+      25.33,
+      25.69,
+      25.33,
+      25.81,
+      26.08
+    ],
+    "runtime": null
+  },
+  "1B_Q4_K_M|large|dotllm": {
+    "engine": "dotLLM (hip:gfx1100)",
+    "model": "Llama-3.2-1B-Instruct-Q4_K_M",
+    "prefill_ms": 187.7,
+    "decode_ms": 314.3,
+    "prefill_tokens": 611,
+    "decode_tokens": 128,
+    "prefill_tok_per_sec": 3255.17,
+    "decode_tok_per_sec": 404.12,
+    "decode_ms_per_tok": 2.45546875,
+    "total_tok_per_sec": 1472.1115537848605,
+    "bdn_mean_ns": null,
+    "bdn_stddev_ns": null,
+    "median_prefill_tok_per_sec": 3255.17,
+    "median_decode_tok_per_sec": 404.12,
+    "median_prefill_ms": 187.7,
+    "median_decode_ms": 314.3,
+    "decode_cv": 0.010487641858292145,
+    "prefill_cv": 0.003351492626294667,
+    "all_decode_tok_per_sec": [
+      404.93,
+      404.12,
+      401.11,
+      395.73,
+      406.37
+    ],
+    "all_prefill_tok_per_sec": [
+      3247.39,
+      3268.48,
+      3255.17,
+      3265.71,
+      3243.69
+    ],
+    "all_decode_ms": [
+      313.6,
+      314.3,
+      316.6,
+      320.9,
+      312.5
+    ],
+    "all_prefill_ms": [
+      188.2,
+      186.9,
+      187.7,
+      187.1,
+      188.4
+    ],
+    "runtime": null
+  },
+  "1B_Q4_K_M|large|llamacpp_hip": {
+    "engine": "llama.cpp (ROCm0)",
+    "model": "Llama-3.2-1B-Instruct-Q4_K_M",
+    "prefill_ms": 141.34,
+    "decode_ms": 320.47,
+    "prefill_tokens": 612,
+    "decode_tokens": 127,
+    "prefill_tok_per_sec": 4330.05,
+    "decode_tok_per_sec": 396.29,
+    "decode_ms_per_tok": 2.5233858267716536,
+    "total_tok_per_sec": 1600.2252008401722,
+    "bdn_mean_ns": null,
+    "bdn_stddev_ns": null,
+    "median_prefill_tok_per_sec": 4330.05,
+    "median_decode_tok_per_sec": 396.29,
+    "median_prefill_ms": 141.34,
+    "median_decode_ms": 320.47,
+    "decode_cv": 0.008115516767406279,
+    "prefill_cv": 0.027199945204171752,
+    "all_decode_tok_per_sec": [
+      393.91,
+      392.86,
+      398.24,
+      396.29,
+      400.79
+    ],
+    "all_prefill_tok_per_sec": [
+      4135.44,
+      4330.05,
+      4213.86,
+      4427.98,
+      4355.03
+    ],
+    "all_decode_ms": [
+      322.41,
+      323.27,
+      318.91,
+      320.47,
+      316.88
+    ],
+    "all_prefill_ms": [
+      147.99,
+      141.34,
+      145.24,
+      138.21,
+      140.53
+    ],
+    "runtime": null
+  },
+  "1B_Q4_K_M|large|llamacpp_vulkan": {
+    "engine": "llama.cpp (Vulkan2)",
+    "model": "Llama-3.2-1B-Instruct-Q4_K_M",
+    "prefill_ms": 52.25,
+    "decode_ms": 223.61,
+    "prefill_tokens": 612,
+    "decode_tokens": 127,
+    "prefill_tok_per_sec": 11712.92,
+    "decode_tok_per_sec": 567.94,
+    "decode_ms_per_tok": 1.7607086614173229,
+    "total_tok_per_sec": 2678.895091713188,
+    "bdn_mean_ns": null,
+    "bdn_stddev_ns": null,
+    "median_prefill_tok_per_sec": 11712.92,
+    "median_decode_tok_per_sec": 567.94,
+    "median_prefill_ms": 52.25,
+    "median_decode_ms": 223.61,
+    "decode_cv": 0.011786135257840287,
+    "prefill_cv": 0.02088700536560799,
+    "all_decode_tok_per_sec": [
+      570.84,
+      569.85,
+      566.51,
+      554.35,
+      567.94
+    ],
+    "all_prefill_tok_per_sec": [
+      11989.66,
+      11894.35,
+      11712.92,
+      11349.31,
+      11707.77
+    ],
+    "all_decode_ms": [
+      222.48,
+      222.86,
+      224.18,
+      229.1,
+      223.61
+    ],
+    "all_prefill_ms": [
+      51.04,
+      51.45,
+      52.25,
+      53.92,
+      52.27
+    ],
+    "runtime": null
+  },
+  "8B_Q4_K_M|medium|dotllm": {
+    "engine": "dotLLM (hip:gfx1100)",
+    "model": "Meta-Llama-3.1-8B-Instruct-Q4_K_M",
+    "prefill_ms": 230.8,
+    "decode_ms": 1397.2,
+    "prefill_tokens": 229,
+    "decode_tokens": 128,
+    "prefill_tok_per_sec": 992.19,
+    "decode_tok_per_sec": 90.9,
+    "decode_ms_per_tok": 10.915625,
+    "total_tok_per_sec": 219.2874692874693,
+    "bdn_mean_ns": null,
+    "bdn_stddev_ns": null,
+    "median_prefill_tok_per_sec": 992.19,
+    "median_decode_tok_per_sec": 90.9,
+    "median_prefill_ms": 230.8,
+    "median_decode_ms": 1397.2,
+    "decode_cv": 0.0037033962058744315,
+    "prefill_cv": 0.06389986312136021,
+    "all_decode_tok_per_sec": [
+      90.9,
+      91.27,
+      90.8,
+      91.49,
+      90.69
+    ],
+    "all_prefill_tok_per_sec": [
+      992.19,
+      1001.68,
+      856.62,
+      993.85,
+      989.94
+    ],
+    "all_decode_ms": [
+      1397.2,
+      1391.5,
+      1398.7,
+      1388.2,
+      1400.3
+    ],
+    "all_prefill_ms": [
+      230.8,
+      228.6,
+      267.3,
+      230.4,
+      231.3
+    ],
+    "runtime": null
+  },
+  "8B_Q4_K_M|medium|llamacpp_hip": {
+    "engine": "llama.cpp (ROCm0)",
+    "model": "Meta-Llama-3.1-8B-Instruct-Q4_K_M",
+    "prefill_ms": 177.09,
+    "decode_ms": 1022.37,
+    "prefill_tokens": 228,
+    "decode_tokens": 127,
+    "prefill_tok_per_sec": 1287.46,
+    "decode_tok_per_sec": 124.22,
+    "decode_ms_per_tok": 8.05015748031496,
+    "total_tok_per_sec": 295.9665182665533,
+    "bdn_mean_ns": null,
+    "bdn_stddev_ns": null,
+    "median_prefill_tok_per_sec": 1287.46,
+    "median_decode_tok_per_sec": 124.22,
+    "median_prefill_ms": 177.09,
+    "median_decode_ms": 1022.37,
+    "decode_cv": 0.005302765927136445,
+    "prefill_cv": 0.012656637853159779,
+    "all_decode_tok_per_sec": [
+      123.08,
+      124.9,
+      124.1,
+      124.22,
+      124.3
+    ],
+    "all_prefill_tok_per_sec": [
+      1281.99,
+      1301.64,
+      1275.72,
+      1316.37,
+      1287.46
+    ],
+    "all_decode_ms": [
+      1031.89,
+      1016.8,
+      1023.34,
+      1022.37,
+      1021.72
+    ],
+    "all_prefill_ms": [
+      177.85,
+      175.16,
+      178.72,
+      173.2,
+      177.09
+    ],
+    "runtime": null
+  },
+  "8B_Q4_K_M|medium|llamacpp_vulkan": {
+    "engine": "llama.cpp (Vulkan2)",
+    "model": "Meta-Llama-3.1-8B-Instruct-Q4_K_M",
+    "prefill_ms": 114.62,
+    "decode_ms": 895.06,
+    "prefill_tokens": 228,
+    "decode_tokens": 127,
+    "prefill_tok_per_sec": 1989.2,
+    "decode_tok_per_sec": 141.89,
+    "decode_ms_per_tok": 7.047716535433071,
+    "total_tok_per_sec": 351.5965454401395,
+    "bdn_mean_ns": null,
+    "bdn_stddev_ns": null,
+    "median_prefill_tok_per_sec": 1989.2,
+    "median_decode_tok_per_sec": 141.89,
+    "median_prefill_ms": 114.62,
+    "median_decode_ms": 895.06,
+    "decode_cv": 0.0032988153261390004,
+    "prefill_cv": 0.003721194447964555,
+    "all_decode_tok_per_sec": [
+      142.05,
+      142.21,
+      141.89,
+      141.14,
+      141.32
+    ],
+    "all_prefill_tok_per_sec": [
+      1979.13,
+      1997.44,
+      1982.33,
+      1992.19,
+      1989.2
+    ],
+    "all_decode_ms": [
+      894.07,
+      893.05,
+      895.06,
+      899.82,
+      898.64
+    ],
+    "all_prefill_ms": [
+      115.2,
+      114.15,
+      115.02,
+      114.45,
+      114.62
+    ],
+    "runtime": null
+  }
+}
