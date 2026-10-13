@@ -129,6 +129,7 @@ graph TD
   3. Ladda `rocblas.dll` först därefter.
   4. Verifiera att exakt **en** modul med namnet `amdhip64_*` finns i processen. Laddas v6 är det ett fel.
 - `[SuppressGCTransition]` endast på `hipFree`, `hipGetErrorString` och `hipGetErrorName`.
+- **Status (2026-10-13):** Klar. `HipApi.cs`, `HipLibraryResolver.cs`, `HipException.cs` och `RocblasApi.cs` implementerade i `src/DotLLM.Hip/Interop/`. Resolvern laddar med full sökväg, validerar major 7 och verifierar en enda `amdhip64_*`-modul.
 
 ### H1.2 `HipDevice`
 - Enumerera enheter och läs `gcnArchName` och `isIntegrated`. Filtrera bort iGPU och arkitekturer som inte stöds. Exponera `Arch`, VRAM, `ComputeUnits = 2 × multiProcessorCount` (W11), L2 och `IsAvailable(out string reason)`.
@@ -137,16 +138,19 @@ graph TD
   - `hip` och `hip:gfx1100` → enheten med `Arch == gfx1100`.
   - `hip:gfx1201` → enheten med `Arch == gfx1201`.
   - En enhet med `isIntegrated=1` väljs aldrig. Det verifieras med en mockad enumerering.
+- **Status (2026-10-13):** Klar. `HipDevice.cs` implementerad med `QueryPhysicalDevices`, `FilterSupportedDevices`, `ResolveDevice` och mockningsbara metoder. `sizeof(HipDevicePropR0600) == 1472` verifierat.
 
 ### H1.3 `HipModule`, `HipKernelLoader`, `HipStream`, `HipTensor`, `HipPinnedBuffer`, `HipBackend : IBackend`
 - `HipKernelLoader` läser den inbäddade `hsaco/{arch}/*.hsaco`, kopierar den till ett `NativeMemory`-block och anropar `hipModuleLoadData`.
 - Testinfrastruktur: `[Collection("HipGpu")]` med `DisableParallelization = true` (W13), `[Trait("Category","GPU-AMD")]` och `Skip.IfNot(HipDevice.IsAvailable(...))`.
 - Tester: `HipDeviceTests`, `HipTensorTests`, `HipKernelManifestTests` (D7) och `HipLibraryResolverTests` (en enda runtime-instans). `HipKernelLoaderTests` laddar den inbäddade `toolchain_smoke.hsaco` och kör den på båda korten (samma kontroller som `check-hip-env.ps1` steg 8).
 - **CI (beslut 2026-10-13):** I samma PR ändras filtret i `.github/workflows/ci.yml` till `--filter "Category!=GPU&Category!=GPU-AMD"`. Testerna ska **dessutom** skippa sig själva via `IsAvailable`. Båda skydden krävs.
+- **Status (2026-10-13):** Klar. `HipModule.cs`, `HipKernelLoader.cs`, `HipStream.cs`, `HipTensor.cs`, `HipPinnedBuffer.cs` och `HipBackend.cs` implementerade. Testerna körs och passerar på både 7900 XTX (`gfx1100`) och 9070 XT (`gfx1201`). CI-filtret uppdaterat.
 
 ### H1.4 `HipBlasHandle` och `HipGemm`
 - `rocblas_gemm_ex` med f16 in/ut och **f32 compute**, row-major-trick. Tydligt fel om `rocblas\library` saknas (W7).
 - **Acceptans:** GEMM mot CPU-referens för formerna 1×4096×4096, 512×4096×14336 och 512×14336×4096.
+- **Status (2026-10-13):** Klar. `HipBlasHandle.cs` och `HipGemm.cs` implementerade med `rocblas_gemm_ex` (FP16 in/ut, FP32 compute, row-major transpose trick). `HipGemmTests` verifierar 1×4096×4096, 512×4096×14336 och 512×14336×4096 samt GEMV mot CPU-referens på båda korten.
 
 ---
 
@@ -184,10 +188,22 @@ graph TD
   - 64 greedy-tokens är identiska med CPU.
   - Gäller **båda korten**.
   - En baseline-benchmark (prefill/decode tok/s med `prompt-medium.txt` och `prompt-large.txt`) körs för 7900 XTX och jämförs med llama.cpp (HIP och Vulkan) på samma maskin. Resultatet läggs i `docs/HIP.md`.
+- **Förutsättningar (målmaskinen):**
+  - Modellerna ligger i `~/.dotllm/models/<owner>/<repo>/`, samma sökvägar som i `CudaDecodeDebugTest`. De hämtas med `dotllm model pull`.
+  - llama.cpp **b11583**, de officiella Windows-binärerna `win-rocm-10.0-x64` och `win-vulkan-x64`. Katalogerna pekas ut av `DOTLLM_LLAMACPP_HIP` och `DOTLLM_LLAMACPP_VULKAN`; de ligger utanför repot och aldrig i `PATH` (W17). Build-numret noteras i `HIP.md` tillsammans med resultaten.
+  - **Ett kort per körning (W17):** `-dev` väljs genom att matcha kortnamnet i `--list-devices`. I dag blir det `ROCm0` och `Vulkan2` för 7900 XTX. Fördelning över flera kort ger en ogiltig baseline.
+  - Den befintliga [`scripts/bench_compare.py`](../scripts/bench_compare.py) används med `--llamacpp-bin "$env:DOTLLM_LLAMACPP_HIP\llama-completion.exe"` (resp. `_VULKAN`). Den globala `LLAMACPP_BIN` sätts **inte**, eftersom den bara kan peka på en backend.
+  - **Kodändring i H2.7:** `bench_compare.py` skickar i dag bara `-ngl 99` och inget `-dev`, så llama.cpp delas över båda korten. Lägg till `--llamacpp-device <namn>`, som skickas vidare som `-dev`. Saknas flaggan och fler än en GPU syns i `--list-devices` ska skriptet fallera (W17). dotLLM-sidan körs med `--device hip:gfx1100`.
 
 ### H2.8 Profileringsverktyg (förutsättning för fas 3, blockerar inte fas 1–2)
-- Installera Radeon Developer Tool Suite (RGP, RDP, RGA). Verifiera om RGP kan fånga HIP-köer under Windows, och dokumentera i `HIP.md §5.3`.
-- Om det inte fungerar: dokumentera att fas 3 baseras på `hipEvent`-tidtagning per kernel, bandbreddsberäkning (bytes/tid mot referens) och ISA-inspektion (VGPR-antal och occupancy via `.vgpr_count` i metadata).
+- **Verifierat 2026-10-13:**
+  - RDTS 2026-10-02 (RGP 2.7.1, RDP 3.5.1, RGA 2.15.0) är portabel och kräver ingen installation. Placeringen styrs av W16.
+  - RGP:s README anger **HIP och OpenCL på Windows 11** för RX 7000/9000.
+  - **RGA binary mode fungerar på våra code objects** för båda arkitekturerna. Bundlen packas först upp med `clang-offload-bundler --unbundle` (§4 i HIP_PITFALLS), sedan körs `rga -s bin -a stats.csv --isa isa.txt --livereg livereg.txt <elf>`. Utdata: använda VGPR/SGPR, spills, LDS, ISA och live-VGPR per instruktion.
+- **Kvar att göra:**
+  1. Fånga en RGP-profil av en HIP-körning via Radeon Developer Panel. Använd `DotLLM.Hip.Spikes.exe` (apphost), inte `dotnet.exe` eller `testhost.exe`. Verifiera att dispatchar, kerneltider och occupancy syns, och dokumentera stegen i `HIP.md §5.3`.
+  2. Skriv `scripts/hip-isa-report.ps1`. Det packar upp alla inbäddade `.hsaco` för båda arkitekturerna, kör RGA och skriver en tabell (kernel, VGPR, SGPR, spills, LDS) till stdout eller Markdown. Skriptet används i fas 3-PR:er för att visa ISA-effekten före och efter.
+- Om RGP-fångst inte fungerar: dokumentera att fas 3 baseras på `hipEvent`-tidtagning per kernel, bandbreddsberäkning (bytes/tid mot referens) och RGA-rapporten ovan.
 
 ---
 

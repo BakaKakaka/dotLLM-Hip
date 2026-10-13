@@ -172,4 +172,12 @@ Härledd gate H3.2 (≥ 80 % av H0.3-bandbredden): **≥ 676 GB/s** på 7900 XTX
 
 ### 5.3 RGP/RGA på Windows
 
-Radeon GPU Profiler/Radeon Developer Panel och RGA var inte installerade på målmaskinen vid H0.2. Om RGP kan fånga HIP-köer under Windows är därför **inte verifierat** – följs upp i **H2.8** (förutsättning för fas 3). Fram till dess gäller `hipEvent`-tidtagning (inbyggd i spike-harnessen) och ISA-inspektion via `clang-offload-bundler` + `llvm-objdump` (W8, se HIP_PITFALLS §4).
+Radeon Developer Tool Suite 2026-10-02 (RGP 2.7.1, RDP 3.5.1, RGA 2.15.0) finns på målmaskinen som portabel mapp. Placera den enligt **W16**: utanför repot, utpekad av `DOTLLM_RDTS`, aldrig i `PATH`.
+
+- **RGA (verifierat 2026-10-13):** binary mode fungerar på våra code objects för `gfx1100` och `gfx1201` efter uppackning av offload-bundlen:
+  ```powershell
+  & "$env:HIP_PATH\bin\clang-offload-bundler.exe" --type=o --unbundle --targets=hipv4-amdgcn-amd-amdhsa--gfx1100 --input=<kernel>.hsaco --output=<kernel>.elf
+  & "$env:DOTLLM_RDTS\rga.exe" -s bin -a stats.csv --isa isa.txt --livereg livereg.txt <kernel>.elf
+  ```
+  Exempel, `toolchain_smoke` `smoke` på gfx1100: 19 VGPR, 18 SGPR, 0 spills, 0 LDS, 336 B ISA. RGA kan inte läsa bundlen direkt ("not a valid object file").
+- **RGP:** README:n anger HIP och OpenCL på Windows 11 för RX 7000/9000. Själva fångsten via Radeon Developer Panel är **ännu inte verifierad** och följs upp i H2.8. Fram till dess gäller `hipEvent`-tidtagning och RGA-rapporten.

@@ -1,0 +1,41 @@
+AMD Kernel Code for "smoke_wmma"
+
+Disassembly for "smoke_wmma":
+
+@kernel smoke_wmma:
+	s_load_b128 s[4:7], s[0:1], 0x0                            // 000000001F00: F4004100 F8000000
+	v_lshrrev_b32_e32 v1, 1, v0                                // 000000001F08: 32020081
+	v_and_b32_e32 v2, 15, v0                                   // 000000001F0C: 3604008F
+	v_lshlrev_b32_e32 v5, 1, v0                                // 000000001F10: 300A0081
+	s_load_b64 s[0:1], s[0:1], 0x10                            // 000000001F14: F4002000 F8000010
+	v_lshlrev_b32_e32 v16, 5, v0                               // 000000001F1C: 30200085
+	v_and_b32_e32 v3, 8, v1                                    // 000000001F20: 36060288
+	v_lshlrev_b32_e32 v4, 1, v2                                // 000000001F24: 30080481
+	v_lshlrev_b32_e32 v1, 5, v1                                // 000000001F28: 30020285
+	s_delay_alu instid0(VALU_DEP_2) | instskip(SKIP_1) | instid1(VALU_DEP_3)// 000000001F2C: BF8701A2
+	v_lshl_or_b32 v4, v3, 5, v4                                // 000000001F30: D6560004 04110B03
+	v_lshlrev_b32_e32 v3, 1, v3                                // 000000001F38: 30060681
+	v_or3_b32 v1, v1, v5, 0xe0                                 // 000000001F3C: D6580001 03FE0B01 000000E0
+	s_wait_kmcnt 0x0                                           // 000000001F48: BFC70000
+	s_clause 0x3                                               // 000000001F4C: BF850003
+	global_load_u16 v8, v4, s[6:7]                             // 000000001F50: EE048006 00000008 00000004
+	global_load_u16 v9, v4, s[6:7] offset:64                   // 000000001F5C: EE048006 00000009 00004004
+	global_load_u16 v10, v4, s[6:7] offset:128                 // 000000001F68: EE048006 0000000A 00008004
+	global_load_u16 v11, v4, s[6:7] offset:192                 // 000000001F74: EE048006 0000000B 0000C004
+	v_lshl_or_b32 v2, v2, 5, v3                                // 000000001F80: D6560002 040D0B02
+	global_load_b128 v[12:15], v2, s[4:5]                      // 000000001F88: EE05C004 0000000C 00000002
+	s_wait_loadcnt 0x4                                         // 000000001F94: BFC00004
+	global_load_d16_hi_b16 v8, v4, s[6:7] offset:32            // 000000001F98: EE08C006 00000008 00002004
+	s_wait_loadcnt 0x4                                         // 000000001FA4: BFC00004
+	global_load_d16_hi_b16 v9, v4, s[6:7] offset:96            // 000000001FA8: EE08C006 00000009 00006004
+	s_wait_loadcnt 0x4                                         // 000000001FB4: BFC00004
+	global_load_d16_hi_b16 v10, v4, s[6:7] offset:160          // 000000001FB8: EE08C006 0000000A 0000A004
+	s_wait_loadcnt 0x4                                         // 000000001FC4: BFC00004
+	global_load_d16_hi_b16 v11, v1, s[6:7]                     // 000000001FC8: EE08C006 0000000B 00000001
+	s_wait_loadcnt 0x0                                         // 000000001FD4: BFC00000
+	v_wmma_f32_16x16x16_f16 v[0:7], v[12:15], v[8:11], 0       // 000000001FD8: CC404000 1A02110C
+	s_clause 0x1                                               // 000000001FE0: BF850001
+	global_store_b128 v16, v[0:3], s[0:1]                      // 000000001FE4: EE074000 00000000 00000010
+	global_store_b128 v16, v[4:7], s[0:1] offset:16            // 000000001FF0: EE074000 02000000 00001010
+	s_endpgm                                                   // 000000001FFC: BFB00000
+
