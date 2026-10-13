@@ -203,6 +203,49 @@ public sealed unsafe class ComputeThreadPoolTests
     }
 
     /// <summary>
+    /// Regression: a <see cref="ComputeThreadPool.Dispatch"/> issued immediately after
+    /// construction must not be missed by workers that have not started running yet.
+    /// Previously each worker snapshotted <c>_dispatchGeneration</c> on its own thread; if the
+    /// first dispatch had already bumped it, the worker treated that dispatch as "already seen",
+    /// skipped it, never signalled completion, and <c>Dispatch</c> blocked forever.
+    /// The loop runs on a background thread with a timeout so a regression fails the test
+    /// instead of hanging the test host.
+    /// </summary>
+    [Fact]
+    public void Dispatch_ImmediatelyAfterConstruction_NeverHangs()
+    {
+        const int iterations = 1000;
+        const int threadCount = 8;
+        const int arraySize = 256;
+
+        int completed = 0;
+        int wrongResults = 0;
+
+        var runner = new Thread(() =>
+        {
+            for (int i = 0; i < iterations; i++)
+            {
+                using var pool = new ComputeThreadPool(threadCount);
+                if (RunSumWork(pool, arraySize) != arraySize)
+                    Interlocked.Increment(ref wrongResults);
+                Interlocked.Increment(ref completed);
+            }
+        })
+        {
+            IsBackground = true,
+            Name = "ComputeThreadPool-startup-race-test"
+        };
+
+        runner.Start();
+        bool finished = runner.Join(TimeSpan.FromSeconds(60));
+
+        Assert.True(finished,
+            $"Dispatch hung after {Volatile.Read(ref completed)}/{iterations} fresh pools — " +
+            "a worker missed the first dispatch (startup generation race).");
+        Assert.Equal(0, wrongResults);
+    }
+
+    /// <summary>
     /// Helper: dispatches work that sums an array of 1.0f values across all threads.
     /// Returns the computed sum (should equal arraySize when each element is 1.0f).
     /// </summary>
