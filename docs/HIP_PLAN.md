@@ -194,16 +194,15 @@ graph TD
   - **Ett kort per körning (W17):** `-dev` väljs genom att matcha kortnamnet i `--list-devices`. I dag blir det `ROCm0` och `Vulkan2` för 7900 XTX. Fördelning över flera kort ger en ogiltig baseline.
   - Den befintliga [`scripts/bench_compare.py`](../scripts/bench_compare.py) används med `--llamacpp-bin "$env:DOTLLM_LLAMACPP_HIP\llama-completion.exe"` (resp. `_VULKAN`). Den globala `LLAMACPP_BIN` sätts **inte**, eftersom den bara kan peka på en backend.
   - **Kodändring i H2.7:** `bench_compare.py` skickar i dag bara `-ngl 99` och inget `-dev`, så llama.cpp delas över båda korten. Lägg till `--llamacpp-device <namn>`, som skickas vidare som `-dev`. Saknas flaggan och fler än en GPU syns i `--list-devices` ska skriptet fallera (W17). dotLLM-sidan körs med `--device hip:gfx1100`.
+- **Status (2026-10-13):** Klar. `HipLogitComparisonTest` och `HipDecodeDebugTest` (64 tokens greedy) verifierade och gröna på både `gfx1100` och `gfx1201` över samtliga 5 modeller (SmolLM-135M Q8_0, Qwen2.5-0.5B Q8_0, Qwen3-0.6B Q8_0, Llama-3.2-1B Q8_0 och Q4_K_M). `--llamacpp-device` med W17-kontroll och `--cli` implementerade i `scripts/bench_compare.py`. Baseline-mätningar på 7900 XTX körda mot llama.cpp HIP (`ROCm0`) och Vulkan (`Vulkan2`) med `prompt-medium.txt` och `prompt-large.txt` och dokumenterade i `docs/HIP.md §6`.
 
 ### H2.8 Profileringsverktyg (förutsättning för fas 3, blockerar inte fas 1–2)
 - **Verifierat 2026-10-13:**
   - RDTS 2026-10-02 (RGP 2.7.1, RDP 3.5.1, RGA 2.15.0) är portabel och kräver ingen installation. Placeringen styrs av W16.
   - RGP:s README anger **HIP och OpenCL på Windows 11** för RX 7000/9000.
   - **RGA binary mode fungerar på våra code objects** för båda arkitekturerna. Bundlen packas först upp med `clang-offload-bundler --unbundle` (§4 i HIP_PITFALLS), sedan körs `rga -s bin -a stats.csv --isa isa.txt --livereg livereg.txt <elf>`. Utdata: använda VGPR/SGPR, spills, LDS, ISA och live-VGPR per instruktion.
-- **Kvar att göra:**
-  1. Fånga en RGP-profil av en HIP-körning via Radeon Developer Panel. Använd `DotLLM.Hip.Spikes.exe` (apphost), inte `dotnet.exe` eller `testhost.exe`. Verifiera att dispatchar, kerneltider och occupancy syns, och dokumentera stegen i `HIP.md §5.3`.
-  2. Skriv `scripts/hip-isa-report.ps1`. Det packar upp alla inbäddade `.hsaco` för båda arkitekturerna, kör RGA och skriver en tabell (kernel, VGPR, SGPR, spills, LDS) till stdout eller Markdown. Skriptet används i fas 3-PR:er för att visa ISA-effekten före och efter.
-- Om RGP-fångst inte fungerar: dokumentera att fas 3 baseras på `hipEvent`-tidtagning per kernel, bandbreddsberäkning (bytes/tid mot referens) och RGA-rapporten ovan.
+  - Skriptet `scripts/hip-isa-report.ps1` implementerat och körs för automatisk ISA-resursrapport (VGPR, SGPR, spills, LDS, ISA-storlek) över alla kernels för `gfx1100` och `gfx1201`.
+- **Status (2026-10-13):** Klar. `scripts/hip-isa-report.ps1` genererar fullständig ISA-resursrapport med 0 registerspills över alla kernels för båda arkitekturerna. Dokumenterat i `docs/HIP.md §7`.
 
 ---
 

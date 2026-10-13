@@ -13,7 +13,7 @@ namespace DotLLM.Cuda;
 /// CUDA stream with no host synchronization until the final logits D2H transfer.
 /// Mirrors <see cref="TransformerModel"/> structure but uses cuBLAS GEMM/GEMV and custom PTX kernels.
 /// </summary>
-public sealed unsafe class CudaTransformerModel : IModel
+public sealed unsafe class CudaTransformerModel : IModel, IGpuModelInfo
 {
     private readonly CudaWeights _weights;
     private readonly CudaForwardState _state;

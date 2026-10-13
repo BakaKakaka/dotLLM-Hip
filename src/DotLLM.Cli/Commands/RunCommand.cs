@@ -205,22 +205,29 @@ internal sealed class RunCommand : AsyncCommand<RunCommand.Settings>
             config = GgufModelConfigExtractor.Extract(gguf.Metadata);
             tokenizer = GgufBpeTokenizerFactory.Load(gguf.Metadata);
 
-            int gpuLayers = ResolveGpuLayers(settings, config);
-            if (gpuLayers <= 0)
+            if (settings.Device.StartsWith("hip", StringComparison.OrdinalIgnoreCase))
             {
-                model = TransformerModel.LoadFromGguf(gguf, config,
-                    new ThreadingConfig(settings.Threads, settings.DecodeThreads, settings.NumaPin, settings.PCoreOnly));
-            }
-            else if (gpuLayers >= config.NumLayers)
-            {
-                int gpuId = ParseGpuId(settings.Device);
-                model = DotLLM.Cuda.CudaTransformerModel.LoadFromGguf(gguf, config, gpuId);
+                model = DotLLM.Hip.HipTransformerModel.LoadFromGguf(gguf, config, settings.Device);
             }
             else
             {
-                int gpuId = ParseGpuId(settings.Device);
-                model = DotLLM.Cuda.HybridTransformerModel.LoadFromGguf(gguf, config, gpuLayers, gpuId,
-                    new ThreadingConfig(settings.Threads, settings.DecodeThreads, settings.NumaPin, settings.PCoreOnly));
+                int gpuLayers = ResolveGpuLayers(settings, config);
+                if (gpuLayers <= 0)
+                {
+                    model = TransformerModel.LoadFromGguf(gguf, config,
+                        new ThreadingConfig(settings.Threads, settings.DecodeThreads, settings.NumaPin, settings.PCoreOnly));
+                }
+                else if (gpuLayers >= config.NumLayers)
+                {
+                    int gpuId = ParseGpuId(settings.Device);
+                    model = DotLLM.Cuda.CudaTransformerModel.LoadFromGguf(gguf, config, gpuId);
+                }
+                else
+                {
+                    int gpuId = ParseGpuId(settings.Device);
+                    model = DotLLM.Cuda.HybridTransformerModel.LoadFromGguf(gguf, config, gpuLayers, gpuId,
+                        new ThreadingConfig(settings.Threads, settings.DecodeThreads, settings.NumaPin, settings.PCoreOnly));
+                }
             }
         }
 
@@ -239,8 +246,7 @@ internal sealed class RunCommand : AsyncCommand<RunCommand.Settings>
 
         // Display VRAM warning after spinner completes (so it stays visible).
         // In JSON mode, write to stderr so it doesn't corrupt the JSON output.
-        string? vramWarning = (model as DotLLM.Cuda.CudaTransformerModel)?.VramWarning
-                           ?? (model as DotLLM.Cuda.HybridTransformerModel)?.VramWarning;
+        string? vramWarning = (model as IGpuModelInfo)?.VramWarning;
         if (vramWarning is not null)
         {
             if (settings.Json)
@@ -661,6 +667,8 @@ internal sealed class RunCommand : AsyncCommand<RunCommand.Settings>
             return Math.Clamp(settings.GpuLayers.Value, 0, config.NumLayers);
         // Default: 0 for cpu device, all layers for gpu device
         return settings.Device.StartsWith("gpu", StringComparison.OrdinalIgnoreCase)
+            || settings.Device.StartsWith("cuda", StringComparison.OrdinalIgnoreCase)
+            || settings.Device.StartsWith("hip", StringComparison.OrdinalIgnoreCase)
             ? config.NumLayers : 0;
     }
 

@@ -458,6 +458,17 @@ def run_dotllm(
     **kwargs,
 ) -> list[EngineResult]:
     """Run dotLLM BDN benchmarks and parse results."""
+    if kwargs.get("cli") or (device.startswith("hip") and not kwargs.get("force_bdn")):
+        return run_dotllm_cli(
+            model_path=model_path,
+            prompt=prompt,
+            max_tokens=max_tokens,
+            runs=runs,
+            device=device,
+            threads=threads,
+            **kwargs,
+        )
+
     project = Path(bdn_project) if bdn_project else find_benchmark_project()
     project_dir = project.parent
 
@@ -795,13 +806,13 @@ def run_dotllm_cli(
     if gpu_layers is not None:
         hybrid_pct = kwargs.get("hybrid_pct")
         if hybrid_pct is not None:
-            engine_label = f"dotLLM-cli (h{hybrid_pct}%)"
+            engine_label = f"dotLLM (h{hybrid_pct}%)"
         else:
-            engine_label = f"dotLLM-cli (hybrid {gpu_layers}L)"
+            engine_label = f"dotLLM (hybrid {gpu_layers}L)"
     elif device != "cpu":
-        engine_label = f"dotLLM-cli ({device})"
+        engine_label = f"dotLLM ({device})"
     else:
-        engine_label = "dotLLM-cli"
+        engine_label = "dotLLM"
 
     return [EngineResult(
         engine=engine_label,
@@ -861,6 +872,7 @@ def run_llamacpp(
     llamacpp_bin: str | None,
     device: str = "cpu",
     threads: int | None = None,
+    llamacpp_device: str | None = None,
     **kwargs,
 ) -> list[EngineResult]:
     """Run llama.cpp llama-completion N times and parse perf output."""
@@ -912,14 +924,39 @@ def run_llamacpp(
         "-no-cnv",          # disable conversation mode — exit after generation
         "--simple-io",      # safe for subprocesses
         "--perf",           # enable timing output (off by default)
-        "--mlock",          # lock model in RAM — eliminates mmap page faults during timing
     ]
     # Without -t, llama.cpp auto-detects and uses PHYSICAL cores, while dotLLM's
     # -t 0 uses all LOGICAL cores. Pass --threads to pin both to the same count.
     if threads is not None:
         cmd.extend(["-t", str(threads)])
-    if device == "gpu":
+    if device != "cpu":
         cmd.extend(["-ngl", "99"])  # offload all layers to GPU
+        if llamacpp_device:
+            cmd.extend(["-dev", llamacpp_device])
+        else:
+            # W17: validate whether multiple GPU devices exist
+            try:
+                probe = subprocess.run(
+                    [llamacpp_bin, "--list-devices"],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                dev_lines = [
+                    l.strip() for l in probe.stdout.splitlines()
+                    if ":" in l and not l.strip().lower().startswith("available")
+                ]
+                if len(dev_lines) > 1:
+                    dev_names = [l.split(":")[0].strip() for l in dev_lines]
+                    print(
+                        f"[llama.cpp] ERROR (W17): Multiple devices detected in llama.cpp ({', '.join(dev_names)}). "
+                        f"--llamacpp-device <name> (e.g. --llamacpp-device {dev_names[0]}) is required "
+                        f"to prevent invalid multi-GPU splitting.",
+                        file=sys.stderr,
+                    )
+                    return []
+            except Exception as e:
+                print(f"[llama.cpp] Warning: could not check --list-devices: {e}", file=sys.stderr)
 
     # Print command for manual reproduction (truncate long prompts)
     display_cmd = list(cmd)
@@ -993,7 +1030,12 @@ def run_llamacpp(
     total_tok_s = total_tokens / (total_ms / 1000.0) if total_ms > 0 else 0
     ms_per_tok = best_dc_ms / dc_tok if dc_tok > 0 else 0
 
-    engine_label = f"llama.cpp ({device})" if device != "cpu" else "llama.cpp"
+    if llamacpp_device:
+        engine_label = f"llama.cpp ({llamacpp_device})"
+    elif device != "cpu":
+        engine_label = f"llama.cpp ({device})"
+    else:
+        engine_label = "llama.cpp"
 
     return [EngineResult(
         engine=engine_label,
@@ -1477,8 +1519,12 @@ def main() -> int:
     parser.add_argument("--label", type=str, default=None,
                         help="Human label for this benchmark run (used in --export-json)")
     parser.add_argument("--device", type=str, default="cpu",
-                        choices=["cpu", "gpu", "both"],
-                        help="Compute device: cpu (default), gpu, or both (runs each engine on both devices)")
+                        help="Compute device: cpu (default), gpu, hip, hip:gfx1100, hip:gfx1201, or both")
+    parser.add_argument("--llamacpp-device", type=str, default=None,
+                        help="Target device name for llama.cpp -dev flag (e.g. 'ROCm0', 'Vulkan2'). "
+                             "Required if >1 GPU is detected in --list-devices to prevent multi-GPU split (W17).")
+    parser.add_argument("--cli", action="store_true",
+                        help="Run dotLLM via CLI executable instead of BenchmarkDotNet harness")
     parser.add_argument("--hybrid-modes", type=str, default=None,
                         help="Comma-separated fractions (0-1) of layers to offload to GPU. "
                              "E.g. '0.25,0.5,0.75' runs hybrid mode at 25%%, 50%%, 75%% of layers. "
@@ -1619,6 +1665,8 @@ def main() -> int:
                     device=device,
                     threads=args.threads,
                     runtimes=args.runtimes,
+                    llamacpp_device=args.llamacpp_device,
+                    cli=args.cli,
                 )
                 all_results.extend(results)
 

@@ -17,6 +17,7 @@
     <ProjectReference Include="..\DotLLM.Tokenizers\DotLLM.Tokenizers.csproj" />
     <ProjectReference Include="..\DotLLM.Server\DotLLM.Server.csproj" />
     <ProjectReference Include="..\DotLLM.HuggingFace\DotLLM.HuggingFace.csproj" />
+    <ProjectReference Include="..\DotLLM.Hip\DotLLM.Hip.csproj" />
   </ItemGroup>
 
   <ItemGroup>

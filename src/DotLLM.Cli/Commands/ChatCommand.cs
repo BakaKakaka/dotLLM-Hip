@@ -241,35 +241,42 @@ internal sealed class ChatCommand : AsyncCommand<ChatCommand.Settings>
                 ctx.Status("Loading tokenizer...");
                 tokenizer = GgufBpeTokenizerFactory.Load(gguf.Metadata);
 
-                int gpuLayers = ResolveGpuLayers(settings, config);
-                if (gpuLayers <= 0)
+                if (settings.Device.StartsWith("hip", StringComparison.OrdinalIgnoreCase))
                 {
-                    var threading = new ThreadingConfig(settings.Threads, settings.DecodeThreads, settings.NumaPin, settings.PCoreOnly);
-                    ctx.Status($"Loading {config.Architecture} model ({config.NumLayers} layers, {threading.EffectiveThreadCount} threads)...");
-                    model = TransformerModel.LoadFromGguf(gguf, config, threading);
-                }
-                else if (gpuLayers >= config.NumLayers)
-                {
-                    int gpuId = settings.Device.IndexOf(':') is int ci and > 0
-                        ? int.Parse(settings.Device.AsSpan(ci + 1))
-                        : 0;
-                    ctx.Status($"Loading {config.Architecture} model on GPU {gpuId}...");
-                    model = DotLLM.Cuda.CudaTransformerModel.LoadFromGguf(gguf, config, gpuId);
+                    ctx.Status($"Loading {config.Architecture} model on AMD GPU ({settings.Device})...");
+                    model = DotLLM.Hip.HipTransformerModel.LoadFromGguf(gguf, config, settings.Device);
                 }
                 else
                 {
-                    int gpuId = settings.Device.IndexOf(':') is int ci2 and > 0
-                        ? int.Parse(settings.Device.AsSpan(ci2 + 1))
-                        : 0;
-                    var threading = new ThreadingConfig(settings.Threads, settings.DecodeThreads, settings.NumaPin, settings.PCoreOnly);
-                    ctx.Status($"Loading {config.Architecture} model ({gpuLayers} GPU + {config.NumLayers - gpuLayers} CPU layers)...");
-                    model = DotLLM.Cuda.HybridTransformerModel.LoadFromGguf(gguf, config, gpuLayers, gpuId, threading);
+                    int gpuLayers = ResolveGpuLayers(settings, config);
+                    if (gpuLayers <= 0)
+                    {
+                        var threading = new ThreadingConfig(settings.Threads, settings.DecodeThreads, settings.NumaPin, settings.PCoreOnly);
+                        ctx.Status($"Loading {config.Architecture} model ({config.NumLayers} layers, {threading.EffectiveThreadCount} threads)...");
+                        model = TransformerModel.LoadFromGguf(gguf, config, threading);
+                    }
+                    else if (gpuLayers >= config.NumLayers)
+                    {
+                        int gpuId = settings.Device.IndexOf(':') is int ci and > 0
+                            ? int.Parse(settings.Device.AsSpan(ci + 1))
+                            : 0;
+                        ctx.Status($"Loading {config.Architecture} model on GPU {gpuId}...");
+                        model = DotLLM.Cuda.CudaTransformerModel.LoadFromGguf(gguf, config, gpuId);
+                    }
+                    else
+                    {
+                        int gpuId = settings.Device.IndexOf(':') is int ci2 and > 0
+                            ? int.Parse(settings.Device.AsSpan(ci2 + 1))
+                            : 0;
+                        var threading = new ThreadingConfig(settings.Threads, settings.DecodeThreads, settings.NumaPin, settings.PCoreOnly);
+                        ctx.Status($"Loading {config.Architecture} model ({gpuLayers} GPU + {config.NumLayers - gpuLayers} CPU layers)...");
+                        model = DotLLM.Cuda.HybridTransformerModel.LoadFromGguf(gguf, config, gpuLayers, gpuId, threading);
+                    }
                 }
             });
 
         // Display VRAM warning after spinner completes (so it stays visible)
-        string? vramWarning = (model as DotLLM.Cuda.CudaTransformerModel)?.VramWarning
-                           ?? (model as DotLLM.Cuda.HybridTransformerModel)?.VramWarning;
+        string? vramWarning = (model as IGpuModelInfo)?.VramWarning;
         if (vramWarning is not null)
             AnsiConsole.MarkupLine($"[yellow]WARNING: {Markup.Escape(vramWarning)}[/]");
 
@@ -691,6 +698,8 @@ internal sealed class ChatCommand : AsyncCommand<ChatCommand.Settings>
         if (settings.GpuLayers.HasValue)
             return Math.Clamp(settings.GpuLayers.Value, 0, config.NumLayers);
         return settings.Device.StartsWith("gpu", StringComparison.OrdinalIgnoreCase)
+            || settings.Device.StartsWith("cuda", StringComparison.OrdinalIgnoreCase)
+            || settings.Device.StartsWith("hip", StringComparison.OrdinalIgnoreCase)
             ? config.NumLayers : 0;
     }
 

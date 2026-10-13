@@ -77,7 +77,12 @@ public static class ServerStartup
             : options.Device.StartsWith("gpu", StringComparison.OrdinalIgnoreCase) ? config.NumLayers : 0;
 
         IModel model;
-        if (gpuLayers <= 0)
+        if (options.Device.StartsWith("hip", StringComparison.OrdinalIgnoreCase))
+        {
+            Console.WriteLine($"[dotllm] AMD GPU inference ({options.Device})");
+            model = DotLLM.Hip.HipTransformerModel.LoadFromGguf(gguf, config, options.Device);
+        }
+        else if (gpuLayers <= 0)
         {
             Console.WriteLine($"[dotllm] CPU inference ({threading.EffectiveThreadCount} threads)");
             model = TransformerModel.LoadFromGguf(gguf, config, threading);
@@ -93,6 +98,11 @@ public static class ServerStartup
             int gpuId = ParseGpuId(options.Device);
             Console.WriteLine($"[dotllm] Hybrid inference ({gpuLayers} GPU + {config.NumLayers - gpuLayers} CPU layers)");
             model = DotLLM.Cuda.HybridTransformerModel.LoadFromGguf(gguf, config, gpuLayers, gpuId, threading);
+        }
+
+        if (model is DotLLM.Core.Models.IGpuModelInfo gpuInfo && gpuInfo.VramWarning is not null)
+        {
+            Console.WriteLine($"[dotllm] WARNING: {gpuInfo.VramWarning}");
         }
 
         // Create chat template
@@ -116,7 +126,13 @@ public static class ServerStartup
 
         Func<ModelConfig, int, IKvCache>? kvFactory = null;
         PagedKvCacheFactory? pagedFactory = null;
-        if (model is DotLLM.Cuda.CudaTransformerModel cudaModel)
+        if (model is DotLLM.Hip.HipTransformerModel hipModel)
+        {
+            if (options.UsePaged)
+                Console.WriteLine("[dotllm] Paged KV-cache not supported with HIP, using GPU cache.");
+            kvFactory = (cfg, size) => hipModel.CreateKvCache(size);
+        }
+        else if (model is DotLLM.Cuda.CudaTransformerModel cudaModel)
         {
             if (options.UsePaged)
                 Console.WriteLine("[dotllm] Paged KV-cache not supported with CUDA, using GPU cache.");
