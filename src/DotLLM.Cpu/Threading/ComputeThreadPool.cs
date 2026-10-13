@@ -219,7 +219,12 @@ public sealed unsafe class ComputeThreadPool : IDisposable
         if (_workerCoreAssignment[arrayIdx] >= 0)
             CpuAffinity.PinCurrentThread(_workerCoreAssignment[arrayIdx]);
 
-        int lastGeneration = Volatile.Read(ref _dispatchGeneration);
+        // Workers are started from the constructor before any Dispatch can run, so the
+        // baseline generation is always 0. Reading _dispatchGeneration here instead races
+        // with an immediate first Dispatch: a late-starting worker would adopt that
+        // generation as "already seen", treat the wake-up as stale, skip the work and never
+        // signal _completion — leaving Dispatch blocked forever.
+        int lastGeneration = 0;
 
         while (true)
         {
