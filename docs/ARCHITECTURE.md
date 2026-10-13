@@ -6,7 +6,7 @@
 ┌─────────────────────────────────────────────────────────────────┐
 │  DotLLM.Server (ASP.NET Minimal API)                            │
 │  ├── /v1/chat/completions, /v1/completions, /v1/embeddings      │
-│  ├── /v1/models, /v1/tokenize, /v1/detokenize                  │
+│  ├── /v1/models, /v1/tokenize, /v1/detokenize                   │
 │  ├── Tool calling protocol handler                              │
 │  └── Rate limiting, API key auth, request priority              │
 ├─────────────────────────────────────────────────────────────────┤
@@ -28,16 +28,16 @@
 │  └── DeepSeekModel (MLA)                                        │
 ├─────────────────────────────────────────────────────────────────┤
 │  DotLLM.Diagnostics              DotLLM.Telemetry               │
-│  ├── Hook registry                ├── IInferenceMetrics          │
-│  ├── Activation capture           └── IRequestTracer             │
-│  ├── Logit lens                                                  │
-│  └── SAE integration                                             │
+│  ├── Hook registry                ├── IInferenceMetrics         │
+│  ├── Activation capture           └── IRequestTracer            │
+│  ├── Logit lens                                                 │
+│  └── SAE integration                                            │
 ├─────────────────────────────────────────────────────────────────┤
 │  DotLLM.Core (Interfaces & Abstractions)                        │
 │  ├── ITensor, TensorShape, DType                                │
 │  ├── IBackend, DevicePlacement                                  │
 │  ├── IAttentionStrategy                                         │
-│  ├── IPositionEncoding                                           │
+│  ├── IPositionEncoding                                          │
 │  ├── ISamplerStep, ILogitProcessor, IStopCondition              │
 │  ├── IDecodingConstraint, TokenMask                             │
 │  ├── IInferenceHook, HookPoint                                  │
@@ -48,11 +48,12 @@
 │  ├── SIMD kernels        │  ├── P/Invoke interop                │
 │  └── TensorPrimitives    │  └── Handle management               │
 ├──────────────────────────┼──────────────────────────────────────┤
-│  P/Invoke boundary       │                                      │
+|  DotLLM.Hip              |                                      |
+│  └── native/src/hip (C++ / HIP för gfx1100 & gfx1200)           │
 ├──────────────────────────┼──────────────────────────────────────┤
 │  Native C/CUDA Library   │                                      │
 │  ├── cuBLAS GEMM         │  ├── Flash attention .cu             │
-│  ├── Quantized matmul    │  ├── Fused RoPE/RMSNorm/SiLU .cu    │
+│  ├── Quantized matmul    │  ├── Fused RoPE/RMSNorm/SiLU .cu     │
 │  ├── NCCL wrappers       │  └── GPU memory pool                 │
 └──────────────────────────┴──────────────────────────────────────┘
 ```
