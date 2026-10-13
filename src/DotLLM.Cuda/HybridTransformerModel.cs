@@ -22,7 +22,7 @@ namespace DotLLM.Cuda;
 /// the layer boundary with FP16-to-FP32 conversion. Useful when a model doesn't fully fit
 /// in VRAM.
 /// </summary>
-public sealed unsafe class HybridTransformerModel : IModel
+public sealed unsafe class HybridTransformerModel : IModel, IGpuModelInfo
 {
     private const int Q8_0BlockBytes = 34;
     private const int Q8_0GroupSize = 32;

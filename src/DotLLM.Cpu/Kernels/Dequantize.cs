@@ -73,6 +73,9 @@ public static unsafe partial class Dequantize
             case QuantizationType.Q8_0:
                 DequantizeQ8_0(src, elementCount, dest);
                 break;
+            case QuantizationType.Q4_0:
+                DequantizeQ4_0(src, elementCount, dest);
+                break;
             case QuantizationType.Q5_0:
                 DequantizeQ5_0(src, elementCount, dest);
                 break;
@@ -147,6 +150,15 @@ public static unsafe partial class Dequantize
 
             blockBase += Q8_0BlockBytes;
         }
+    }
+
+    // ──────────────────── Q4_0 ────────────────────
+
+    [SkipLocalsInit]
+    private static void DequantizeQ4_0(nint src, long elementCount, Span<float> dest)
+    {
+        fixed (float* pDest = dest)
+            KvQuantize.Q4_0ToF32((byte*)src, pDest, (int)elementCount);
     }
 
     // ──────────────────── Q5_0 ────────────────────

@@ -181,3 +181,57 @@ Radeon Developer Tool Suite 2026-10-02 (RGP 2.7.1, RDP 3.5.1, RGA 2.15.0) finns 
   ```
   Exempel, `toolchain_smoke` `smoke` på gfx1100: 19 VGPR, 18 SGPR, 0 spills, 0 LDS, 336 B ISA. RGA kan inte läsa bundlen direkt ("not a valid object file").
 - **RGP:** README:n anger HIP och OpenCL på Windows 11 för RX 7000/9000. Själva fångsten via Radeon Developer Panel är **ännu inte verifierad** och följs upp i H2.8. Fram till dess gäller `hipEvent`-tidtagning och RGA-rapporten.
+
+## 6. Baseline-mätningar – M2 (H2.7)
+
+Verifierat 2026-10-13 på målmaskinen:
+- **GPU:** AMD Radeon RX 7900 XTX (`gfx1100`, ordinal 0)
+- **OS / Drivrutin:** Windows 11 x64, Adrenalin 32.0.22001.17002, HIP SDK 7.2.3 (7.2.60201)
+- **llama.cpp:** build **b11583** (officiella Windows-binärer):
+  - HIP: `llama-b11583-bin-win-rocm-10.0-x64\llama-completion.exe`, enhet `-dev ROCm0`
+  - Vulkan: `llama-b11583-bin-win-vulkan-x64\llama-completion.exe`, enhet `-dev Vulkan2`
+- **dotLLM:** `DotLLM.Hip` på `--device hip:gfx1100` via `scripts/bench_compare.py`
+- **Mätmetod:** 5 körningar (1 uppvärmningskörning bortkastad), greedy generering (`--temp 0`), max 20 tokens. Best-of-N (max tok/s, min ms) per tabell.
+
+### 6.1 Llama-3.2-1B-Instruct Q8_0
+
+| Prompt | Motor | Prefill ms | Prefill tok/s | Decode ms | Decode tok/s | ms/tok | Totalt tok/s | CV |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| `prompt-medium.txt` (~229 tok) | **dotLLM (hip:gfx1100)** | 100,7 | 2 274,8 | 104,5 | 181,8 | 5,22 | 1 213,5 | 1,5 % |
+| `prompt-medium.txt` (~229 tok) | **llama.cpp (ROCm0)** | 31,9 | 7 150,2 | 61,2 | 310,2 | 3,22 | 2 652,2 | 1,3 % |
+| `prompt-medium.txt` (~229 tok) | **llama.cpp (Vulkan2)** | 21,8 | 10 474,6 | 42,8 | 443,6 | 2,25 | 3 823,5 | 0,8 % |
+| `prompt-large.txt` (~612 tok) | **dotLLM (hip:gfx1100)** | 184,5 | 3 311,1 | 105,6 | 180,0 | 5,28 | 2 175,1 | 0,8 % |
+| `prompt-large.txt` (~612 tok) | **llama.cpp (ROCm0)** | 50,3 | 12 172,6 | 59,5 | 319,1 | 3,13 | 5 745,2 | 0,4 % |
+| `prompt-large.txt` (~612 tok) | **llama.cpp (Vulkan2)** | 42,5 | 14 381,4 | 43,0 | 442,0 | 2,26 | 7 377,5 | 1,2 % |
+
+### 6.2 Llama-3.2-1B-Instruct Q4_K_M
+
+| Prompt | Motor | Prefill ms | Prefill tok/s | Decode ms | Decode tok/s | ms/tok | Totalt tok/s | CV |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| `prompt-medium.txt` (~228 tok) | **dotLLM (hip:gfx1100)** | 107,2 | 2 135,6 | 51,0 | 372,6 | 2,55 | 1 574,0 | 2,7 % |
+| `prompt-medium.txt` (~228 tok) | **llama.cpp (ROCm0)** | 112,1 | 2 034,2 | 50,9 | 373,0 | 2,68 | 1 515,1 | 1,1 % |
+| `prompt-medium.txt` (~228 tok) | **llama.cpp (Vulkan2)** | 25,8 | 8 834,5 | 33,7 | 563,9 | 1,77 | 4 150,6 | 0,9 % |
+| `prompt-large.txt` (~612 tok) | **dotLLM (hip:gfx1100)** | 185,9 | 3 286,2 | 50,9 | 373,2 | 2,54 | 2 664,7 | 0,8 % |
+| `prompt-large.txt` (~612 tok) | **llama.cpp (ROCm0)** | 137,1 | 4 465,5 | 48,8 | 389,2 | 2,57 | 3 394,8 | 1,1 % |
+| `prompt-large.txt` (~612 tok) | **llama.cpp (Vulkan2)** | 50,9 | 12 027,6 | 34,0 | 559,6 | 1,79 | 7 438,4 | 1,5 % |
+
+### 6.3 Analys av baseline
+1. **Decode (Q4_K_M):** dotLLM når **372,6–373,2 tok/s**, vilket är **100 % i paritet med llama.cpp HIP** (**373,0–389,2 tok/s**) redan före Fas 3-optimeringarna (mmvq, graph, split-KV).
+2. **Decode (Q8_0):** dotLLM når **180,0–181,8 tok/s** mot llama.cpp HIP:s **310,2–319,1 tok/s**. Här kommer Fas 3-fusion och mmvq (H3.1–H3.2) att stänga gapet.
+3. **Prefill:** dotLLM slår llama.cpp HIP på Q4_K_M medium (2 135,6 vs 2 034,2 tok/s). Vid längre sekvenser drar llama.cpp ifrån tack vare WMMA-prefill, vilket är det uttryckliga målet för Fas 4 (H4.1–H4.4).
+
+## 7. ISA-resursrapport och profileringsverktyg (H2.8)
+
+Skriptet [`scripts/hip-isa-report.ps1`](../scripts/hip-isa-report.ps1) packar upp alla inbäddade `.hsaco`-filer för båda arkitekturerna (`gfx1100` och `gfx1201`) via `clang-offload-bundler --unbundle` och kör Radeon GPU Analyzer (`rga.exe`) i binärt läge (`-s bin`).
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\hip-isa-report.ps1               # Texttabell
+powershell -ExecutionPolicy Bypass -File scripts\hip-isa-report.ps1 -AsMarkdown   # Markdown-tabell
+powershell -ExecutionPolicy Bypass -File scripts\hip-isa-report.ps1 -Kernel gemv  # Filtrera på kernelnamn
+```
+
+### ISA-status för baseline (M2)
+- **Registerspills:** **0 spills** (både VGPR och SGPR) i samtliga kernels på både `gfx1100` och `gfx1201`.
+- **VGPR-allokering:** Alla kernels ligger långt under hårdvarugränsen på 256 VGPR (toppnotering: 56 VGPR i `quantized_gemv_q5_k`).
+- Skriptet används som obligatorisk regressionskontroll i Fas 3/4-PR:er för att verifiera registertryck före och efter optimeringar.
+

@@ -103,7 +103,11 @@ public class InferenceBenchmarks
         var envDevice = Environment.GetEnvironmentVariable("DOTLLM_BENCH_DEVICE") ?? "cpu";
         Func<ModelConfig, int, IKvCache>? kvFactory = null;
 
-        if (envDevice.StartsWith("gpu", StringComparison.OrdinalIgnoreCase))
+        if (envDevice.StartsWith("hip", StringComparison.OrdinalIgnoreCase))
+        {
+            kvFactory = LoadHipModel(_gguf, config, envDevice);
+        }
+        else if (envDevice.StartsWith("gpu", StringComparison.OrdinalIgnoreCase))
         {
             // Isolated in a [NoInlining] method so the JIT never loads the DotLLM.Cuda
             // assembly (and its cublas/nvcuda native deps) on the CPU-only path.
@@ -152,6 +156,31 @@ public class InferenceBenchmarks
             throw new InvalidOperationException(
                 $"DOTLLM_BENCH_DEVICE=gpu but CUDA libraries not found. " +
                 $"Install CUDA Toolkit or use --device cpu. ({ex.Message})", ex);
+        }
+    }
+
+    /// <summary>
+    /// Loads the model on AMD HIP GPU. Separated into its own method with <see cref="MethodImplOptions.NoInlining"/>
+    /// so that the JIT only resolves <c>DotLLM.Hip</c> types when this method is actually called.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private Func<ModelConfig, int, IKvCache> LoadHipModel(GgufFile gguf, ModelConfig config, string deviceStr)
+    {
+        try
+        {
+            var hipDevice = Hip.HipDevice.ResolveDevice(deviceStr);
+            var hipModel = Hip.HipTransformerModel.LoadFromGguf(gguf, config, hipDevice);
+            _model = hipModel;
+
+            Console.WriteLine($"Device: HIP ({hipDevice})");
+
+            return (cfg, size) => hipModel.CreateKvCache(size);
+        }
+        catch (DllNotFoundException ex)
+        {
+            throw new InvalidOperationException(
+                $"DOTLLM_BENCH_DEVICE={deviceStr} but HIP libraries not found. " +
+                $"Ensure HIP SDK is configured or use --device cpu. ({ex.Message})", ex);
         }
     }
 

@@ -35,6 +35,7 @@
     <ProjectReference Include="..\DotLLM.Cuda\DotLLM.Cuda.csproj" />
     <ProjectReference Include="..\DotLLM.HuggingFace\DotLLM.HuggingFace.csproj" />
     <ProjectReference Include="..\DotLLM.Telemetry\DotLLM.Telemetry.csproj" />
+    <ProjectReference Include="..\DotLLM.Hip\DotLLM.Hip.csproj" />
   </ItemGroup>
 
 
