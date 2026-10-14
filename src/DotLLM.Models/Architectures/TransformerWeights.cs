@@ -13,6 +13,11 @@ namespace DotLLM.Models.Architectures;
 /// </summary>
 internal readonly struct TransformerLayerWeights
 {
+    /// <summary>True if this layer is a Gated DeltaNet layer (Qwen 3.5 hybrid architecture).</summary>
+    public readonly bool IsDeltaNet;
+    /// <summary>Index into the recurrent DeltaNet state pool (0..numDeltaNetLayers-1). -1 for full attention layers.</summary>
+    public readonly int DeltaNetIndex;
+
     /// <summary>Pre-attention RMSNorm weight [hiddenSize].</summary>
     public readonly float[] AttnNormWeight;
 
@@ -52,6 +57,40 @@ internal readonly struct TransformerLayerWeights
     public readonly int OInputDim;
     /// <summary>Optional output projection bias [OOutputDim]. Null when absent.</summary>
     public readonly float[]? OBias;
+
+    // Gated DeltaNet linear attention weights
+    public readonly nint QkvWeight;
+    public readonly QuantizationType QkvQuantType;
+    public readonly int QkvOutputDim;
+    public readonly int QkvInputDim;
+
+    public readonly nint SsmGateWeight;
+    public readonly QuantizationType SsmGateQuantType;
+    public readonly int SsmGateOutputDim;
+    public readonly int SsmGateInputDim;
+
+    public readonly nint SsmBetaWeight;
+    public readonly QuantizationType SsmBetaQuantType;
+    public readonly int SsmBetaOutputDim;
+    public readonly int SsmBetaInputDim;
+
+    public readonly nint SsmAlphaWeight;
+    public readonly QuantizationType SsmAlphaQuantType;
+    public readonly int SsmAlphaOutputDim;
+    public readonly int SsmAlphaInputDim;
+
+    public readonly nint SsmConv1dWeight;
+    public readonly int SsmConv1dChannels;
+    public readonly int SsmConv1dKernel;
+
+    public readonly float[]? SsmDtBias;
+    public readonly float[]? SsmA;
+    public readonly float[]? SsmNormWeight;
+
+    public readonly nint SsmOutWeight;
+    public readonly QuantizationType SsmOutQuantType;
+    public readonly int SsmOutOutputDim;
+    public readonly int SsmOutInputDim;
 
     /// <summary>Pre-FFN RMSNorm weight [hiddenSize].</summary>
     public readonly float[] FfnNormWeight;
@@ -94,6 +133,8 @@ internal readonly struct TransformerLayerWeights
         float[]? gateBias = null, float[]? upBias = null, float[]? downBias = null,
         float[]? qNormWeight = null, float[]? kNormWeight = null)
     {
+        IsDeltaNet = false;
+        DeltaNetIndex = -1;
         AttnNormWeight = attnNormWeight;
         QNormWeight = qNormWeight;
         KNormWeight = kNormWeight;
@@ -105,6 +146,85 @@ internal readonly struct TransformerLayerWeights
         GateWeight = gateWeight; GateQuantType = gateQuantType; GateOutputDim = gateOutputDim; GateInputDim = gateInputDim; GateBias = gateBias;
         UpWeight = upWeight; UpQuantType = upQuantType; UpOutputDim = upOutputDim; UpInputDim = upInputDim; UpBias = upBias;
         DownWeight = downWeight; DownQuantType = downQuantType; DownOutputDim = downOutputDim; DownInputDim = downInputDim; DownBias = downBias;
+
+        QkvWeight = 0; QkvQuantType = default; QkvOutputDim = 0; QkvInputDim = 0;
+        SsmGateWeight = 0; SsmGateQuantType = default; SsmGateOutputDim = 0; SsmGateInputDim = 0;
+        SsmBetaWeight = 0; SsmBetaQuantType = default; SsmBetaOutputDim = 0; SsmBetaInputDim = 0;
+        SsmAlphaWeight = 0; SsmAlphaQuantType = default; SsmAlphaOutputDim = 0; SsmAlphaInputDim = 0;
+        SsmConv1dWeight = 0; SsmConv1dChannels = 0; SsmConv1dKernel = 0;
+        SsmDtBias = null; SsmA = null; SsmNormWeight = null;
+        SsmOutWeight = 0; SsmOutQuantType = default; SsmOutOutputDim = 0; SsmOutInputDim = 0;
+    }
+
+    private TransformerLayerWeights(
+        int deltaNetIndex,
+        float[] attnNormWeight,
+        float[] ffnNormWeight,
+        nint gateWeight, QuantizationType gateQuantType, int gateOutputDim, int gateInputDim,
+        nint upWeight, QuantizationType upQuantType, int upOutputDim, int upInputDim,
+        nint downWeight, QuantizationType downQuantType, int downOutputDim, int downInputDim,
+        nint qkvWeight, QuantizationType qkvQuantType, int qkvOutputDim, int qkvInputDim,
+        nint ssmGateWeight, QuantizationType ssmGateQuantType, int ssmGateOutputDim, int ssmGateInputDim,
+        nint ssmBetaWeight, QuantizationType ssmBetaQuantType, int ssmBetaOutputDim, int ssmBetaInputDim,
+        nint ssmAlphaWeight, QuantizationType ssmAlphaQuantType, int ssmAlphaOutputDim, int ssmAlphaInputDim,
+        nint ssmConv1dWeight, int ssmConv1dChannels, int ssmConv1dKernel,
+        float[] ssmDtBias, float[] ssmA, float[] ssmNormWeight,
+        nint ssmOutWeight, QuantizationType ssmOutQuantType, int ssmOutOutputDim, int ssmOutInputDim,
+        float[]? gateBias, float[]? upBias, float[]? downBias)
+    {
+        IsDeltaNet = true;
+        DeltaNetIndex = deltaNetIndex;
+        AttnNormWeight = attnNormWeight;
+        FfnNormWeight = ffnNormWeight;
+        GateWeight = gateWeight; GateQuantType = gateQuantType; GateOutputDim = gateOutputDim; GateInputDim = gateInputDim; GateBias = gateBias;
+        UpWeight = upWeight; UpQuantType = upQuantType; UpOutputDim = upOutputDim; UpInputDim = upInputDim; UpBias = upBias;
+        DownWeight = downWeight; DownQuantType = downQuantType; DownOutputDim = downOutputDim; DownInputDim = downInputDim; DownBias = downBias;
+
+        QkvWeight = qkvWeight; QkvQuantType = qkvQuantType; QkvOutputDim = qkvOutputDim; QkvInputDim = qkvInputDim;
+        SsmGateWeight = ssmGateWeight; SsmGateQuantType = ssmGateQuantType; SsmGateOutputDim = ssmGateOutputDim; SsmGateInputDim = ssmGateInputDim;
+        SsmBetaWeight = ssmBetaWeight; SsmBetaQuantType = ssmBetaQuantType; SsmBetaOutputDim = ssmBetaOutputDim; SsmBetaInputDim = ssmBetaInputDim;
+        SsmAlphaWeight = ssmAlphaWeight; SsmAlphaQuantType = ssmAlphaQuantType; SsmAlphaOutputDim = ssmAlphaOutputDim; SsmAlphaInputDim = ssmAlphaInputDim;
+        SsmConv1dWeight = ssmConv1dWeight; SsmConv1dChannels = ssmConv1dChannels; SsmConv1dKernel = ssmConv1dKernel;
+        SsmDtBias = ssmDtBias; SsmA = ssmA; SsmNormWeight = ssmNormWeight;
+        SsmOutWeight = ssmOutWeight; SsmOutQuantType = ssmOutQuantType; SsmOutOutputDim = ssmOutOutputDim; SsmOutInputDim = ssmOutInputDim;
+
+        QWeight = 0; QQuantType = default; QOutputDim = 0; QInputDim = 0; QBias = null;
+        KWeight = 0; KQuantType = default; KOutputDim = 0; KInputDim = 0; KBias = null;
+        VWeight = 0; VQuantType = default; VOutputDim = 0; VInputDim = 0; VBias = null;
+        OWeight = 0; OQuantType = default; OOutputDim = 0; OInputDim = 0; OBias = null;
+        QNormWeight = null; KNormWeight = null;
+    }
+
+    public static TransformerLayerWeights CreateDeltaNet(
+        int deltaNetIndex,
+        float[] attnNormWeight,
+        float[] ffnNormWeight,
+        nint gateWeight, QuantizationType gateQuantType, int gateOutputDim, int gateInputDim,
+        nint upWeight, QuantizationType upQuantType, int upOutputDim, int upInputDim,
+        nint downWeight, QuantizationType downQuantType, int downOutputDim, int downInputDim,
+        nint qkvWeight, QuantizationType qkvQuantType, int qkvOutputDim, int qkvInputDim,
+        nint ssmGateWeight, QuantizationType ssmGateQuantType, int ssmGateOutputDim, int ssmGateInputDim,
+        nint ssmBetaWeight, QuantizationType ssmBetaQuantType, int ssmBetaOutputDim, int ssmBetaInputDim,
+        nint ssmAlphaWeight, QuantizationType ssmAlphaQuantType, int ssmAlphaOutputDim, int ssmAlphaInputDim,
+        nint ssmConv1dWeight, int ssmConv1dChannels, int ssmConv1dKernel,
+        float[] ssmDtBias, float[] ssmA, float[] ssmNormWeight,
+        nint ssmOutWeight, QuantizationType ssmOutQuantType, int ssmOutOutputDim, int ssmOutInputDim,
+        float[]? gateBias = null, float[]? upBias = null, float[]? downBias = null)
+    {
+        return new TransformerLayerWeights(
+            deltaNetIndex,
+            attnNormWeight, ffnNormWeight,
+            gateWeight, gateQuantType, gateOutputDim, gateInputDim,
+            upWeight, upQuantType, upOutputDim, upInputDim,
+            downWeight, downQuantType, downOutputDim, downInputDim,
+            qkvWeight, qkvQuantType, qkvOutputDim, qkvInputDim,
+            ssmGateWeight, ssmGateQuantType, ssmGateOutputDim, ssmGateInputDim,
+            ssmBetaWeight, ssmBetaQuantType, ssmBetaOutputDim, ssmBetaInputDim,
+            ssmAlphaWeight, ssmAlphaQuantType, ssmAlphaOutputDim, ssmAlphaInputDim,
+            ssmConv1dWeight, ssmConv1dChannels, ssmConv1dKernel,
+            ssmDtBias, ssmA, ssmNormWeight,
+            ssmOutWeight, ssmOutQuantType, ssmOutOutputDim, ssmOutInputDim,
+            gateBias, upBias, downBias);
     }
 }
 
@@ -204,9 +324,10 @@ internal sealed class TransformerWeights : IDisposable
 
         // Per-layer weights
         var layers = new TransformerLayerWeights[config.NumLayers];
+        int deltaNetCounter = 0;
         for (int i = 0; i < config.NumLayers; i++)
         {
-            layers[i] = LoadLayer(i, dataBase, tensors, config);
+            layers[i] = LoadLayer(i, dataBase, tensors, config, ref deltaNetCounter);
         }
 
         // Output norm
@@ -253,16 +374,28 @@ internal sealed class TransformerWeights : IDisposable
         for (int i = 0; i < Layers.Length; i++)
         {
             ref readonly var lw = ref Layers[i];
-            repacked[i] = new RepackedLayerWeights
+            if (lw.IsDeltaNet)
             {
-                Q = TryRepack(lw.QWeight, lw.QQuantType, lw.QOutputDim, lw.QInputDim),
-                K = TryRepack(lw.KWeight, lw.KQuantType, lw.KOutputDim, lw.KInputDim),
-                V = TryRepack(lw.VWeight, lw.VQuantType, lw.VOutputDim, lw.VInputDim),
-                O = TryRepack(lw.OWeight, lw.OQuantType, lw.OOutputDim, lw.OInputDim),
-                Gate = TryRepack(lw.GateWeight, lw.GateQuantType, lw.GateOutputDim, lw.GateInputDim),
-                Up = TryRepack(lw.UpWeight, lw.UpQuantType, lw.UpOutputDim, lw.UpInputDim),
-                Down = TryRepack(lw.DownWeight, lw.DownQuantType, lw.DownOutputDim, lw.DownInputDim),
-            };
+                repacked[i] = new RepackedLayerWeights
+                {
+                    Gate = TryRepack(lw.GateWeight, lw.GateQuantType, lw.GateOutputDim, lw.GateInputDim),
+                    Up = TryRepack(lw.UpWeight, lw.UpQuantType, lw.UpOutputDim, lw.UpInputDim),
+                    Down = TryRepack(lw.DownWeight, lw.DownQuantType, lw.DownOutputDim, lw.DownInputDim),
+                };
+            }
+            else
+            {
+                repacked[i] = new RepackedLayerWeights
+                {
+                    Q = TryRepack(lw.QWeight, lw.QQuantType, lw.QOutputDim, lw.QInputDim),
+                    K = TryRepack(lw.KWeight, lw.KQuantType, lw.KOutputDim, lw.KInputDim),
+                    V = TryRepack(lw.VWeight, lw.VQuantType, lw.VOutputDim, lw.VInputDim),
+                    O = TryRepack(lw.OWeight, lw.OQuantType, lw.OOutputDim, lw.OInputDim),
+                    Gate = TryRepack(lw.GateWeight, lw.GateQuantType, lw.GateOutputDim, lw.GateInputDim),
+                    Up = TryRepack(lw.UpWeight, lw.UpQuantType, lw.UpOutputDim, lw.UpInputDim),
+                    Down = TryRepack(lw.DownWeight, lw.DownQuantType, lw.DownOutputDim, lw.DownInputDim),
+                };
+            }
         }
         RepackedLayers = repacked;
 
@@ -300,7 +433,8 @@ internal sealed class TransformerWeights : IDisposable
         int layerIdx,
         nint dataBase,
         IReadOnlyDictionary<string, GgufTensorDescriptor> tensors,
-        ModelConfig config)
+        ModelConfig config,
+        ref int deltaNetCounter)
     {
         string prefix = $"blk.{layerIdx}";
         int hiddenSize = config.HiddenSize;
@@ -309,66 +443,10 @@ internal sealed class TransformerWeights : IDisposable
         var attnNormDesc = tensors[$"{prefix}.attn_norm.weight"];
         float[] attnNorm = DequantizeNorm(dataBase, attnNormDesc, hiddenSize);
 
-        // Q/K/V projections — check for fused attn_qkv.weight (Phi-3 style)
-        nint qPtr, kPtr, vPtr;
-        QuantizationType qQt, kQt, vQt;
-        int qM, qK, kM, kK, vM, vK;
-
-        if (tensors.TryGetValue($"{prefix}.attn_qkv.weight", out var qkvDesc))
-        {
-            // Fused QKV — split by row offset
-            nint qkvPtr = dataBase + (nint)qkvDesc.DataOffset;
-            int inputDim = qkvDesc.Shape[0]; // hidden_size
-            long rowBytes = Dequantize.RowByteSize(inputDim, qkvDesc.QuantizationType);
-
-            int qDim = config.NumAttentionHeads * config.HeadDim;
-            int kvDim = config.NumKvHeads * config.HeadDim;
-
-            qPtr = qkvPtr; qQt = qkvDesc.QuantizationType; qM = qDim; qK = inputDim;
-            kPtr = qkvPtr + (nint)(qDim * rowBytes); kQt = qkvDesc.QuantizationType; kM = kvDim; kK = inputDim;
-            vPtr = qkvPtr + (nint)((qDim + kvDim) * rowBytes); vQt = qkvDesc.QuantizationType; vM = kvDim; vK = inputDim;
-        }
-        else
-        {
-            // Separate Q/K/V (standard path)
-            (qPtr, qQt, qM, qK) = LoadLinear(dataBase, tensors[$"{prefix}.attn_q.weight"]);
-            (kPtr, kQt, kM, kK) = LoadLinear(dataBase, tensors[$"{prefix}.attn_k.weight"]);
-            (vPtr, vQt, vM, vK) = LoadLinear(dataBase, tensors[$"{prefix}.attn_v.weight"]);
-        }
-
-        var (oPtr, oQt, oM, oK) = LoadLinear(dataBase, tensors[$"{prefix}.attn_output.weight"]);
-
-        // Optional biases — check for fused attn_qkv.bias (Phi-3 style)
-        float[]? qBias, kBias, vBias;
-        if (tensors.TryGetValue($"{prefix}.attn_qkv.bias", out var qkvBiasDesc))
-        {
-            // Fused QKV bias — split by element offset
-            nint biasPtr = dataBase + (nint)qkvBiasDesc.DataOffset;
-            int qDim = config.NumAttentionHeads * config.HeadDim;
-            int kvDim = config.NumKvHeads * config.HeadDim;
-
-            qBias = new float[qDim];
-            kBias = new float[kvDim];
-            vBias = new float[kvDim];
-
-            Dequantize.ToFloat32(biasPtr, qDim, qkvBiasDesc.QuantizationType, qBias);
-            Dequantize.ToFloat32(biasPtr + qDim * sizeof(float), kvDim, qkvBiasDesc.QuantizationType, kBias);
-            Dequantize.ToFloat32(biasPtr + (qDim + kvDim) * sizeof(float), kvDim, qkvBiasDesc.QuantizationType, vBias);
-        }
-        else
-        {
-            qBias = LoadOptionalBias(dataBase, tensors, $"{prefix}.attn_q.bias");
-            kBias = LoadOptionalBias(dataBase, tensors, $"{prefix}.attn_k.bias");
-            vBias = LoadOptionalBias(dataBase, tensors, $"{prefix}.attn_v.bias");
-        }
-        float[]? oBias = LoadOptionalBias(dataBase, tensors, $"{prefix}.attn_output.bias");
-
-        // Optional QK-norms (Qwen3-style): per-head RMSNorm applied to Q/K after projection, before RoPE
-        float[]? qNormWeight = LoadOptionalNorm(dataBase, tensors, $"{prefix}.attn_q_norm.weight", config.HeadDim);
-        float[]? kNormWeight = LoadOptionalNorm(dataBase, tensors, $"{prefix}.attn_k_norm.weight", config.HeadDim);
-
-        // FFN norm
-        var ffnNormDesc = tensors[$"{prefix}.ffn_norm.weight"];
+        // FFN norm — check ffn_norm.weight or post_attention_norm.weight
+        var ffnNormDesc = tensors.TryGetValue($"{prefix}.ffn_norm.weight", out var ffnDesc)
+            ? ffnDesc
+            : tensors[$"{prefix}.post_attention_norm.weight"];
         float[] ffnNorm = DequantizeNorm(dataBase, ffnNormDesc, hiddenSize);
 
         // FFN projections — check for fused gate+up (Phi-3 style: ffn_up.weight has 2x intermediate rows)
@@ -390,19 +468,17 @@ internal sealed class TransformerWeights : IDisposable
         }
         else
         {
-            // Fused gate+up in ffn_up.weight (Phi-3 style): output dim = 2 * intermediate_size
-            // Split: first intermediate_size rows = gate, next intermediate_size rows = up
+            // Fused gate+up in ffn_up.weight (Phi-3 style)
             var fusedDesc = tensors[$"{prefix}.ffn_up.weight"];
             nint fusedPtr = dataBase + (nint)fusedDesc.DataOffset;
-            int inputDim = fusedDesc.Shape[0]; // hidden_size
-            int fusedOutputDim = fusedDesc.Shape[1]; // 2 * intermediate_size
+            int inputDim = fusedDesc.Shape[0];
+            int fusedOutputDim = fusedDesc.Shape[1];
             int halfDim = fusedOutputDim / 2;
             long rowBytes = Dequantize.RowByteSize(inputDim, fusedDesc.QuantizationType);
 
             gatePtr = fusedPtr; gateQt = fusedDesc.QuantizationType; gateM = halfDim; gateK = inputDim;
             upPtr = fusedPtr + (nint)(halfDim * rowBytes); upQt = fusedDesc.QuantizationType; upM = halfDim; upK = inputDim;
 
-            // Fused bias split (if present)
             if (tensors.TryGetValue($"{prefix}.ffn_up.bias", out var fusedBiasDesc))
             {
                 nint biasPtr = dataBase + (nint)fusedBiasDesc.DataOffset;
@@ -417,6 +493,83 @@ internal sealed class TransformerWeights : IDisposable
                 upBias = null;
             }
         }
+
+        int fullAttnInterval = config.SsmConfig?.FullAttentionInterval ?? 4;
+        bool isDeltaNet = config.Architecture == Architecture.Qwen35 && ((layerIdx + 1) % fullAttnInterval != 0);
+
+        if (isDeltaNet)
+        {
+            int deltaNetIdx = deltaNetCounter++;
+            var (qkvPtr, qkvQt, qkvM, qkvK) = LoadLinear(dataBase, tensors[$"{prefix}.attn_qkv.weight"]);
+            var (gateZPtr, gateZQt, gateZM, gateZK) = LoadLinear(dataBase, tensors[$"{prefix}.attn_gate.weight"]);
+            var (betaPtr, betaQt, betaM, betaK) = LoadLinear(dataBase, tensors[$"{prefix}.ssm_beta.weight"]);
+            var (alphaPtr, alphaQt, alphaM, alphaK) = LoadLinear(dataBase, tensors[$"{prefix}.ssm_alpha.weight"]);
+
+            var convDesc = tensors[$"{prefix}.ssm_conv1d.weight"];
+            nint convPtr = dataBase + (nint)convDesc.DataOffset;
+            int convKernel = convDesc.Shape[0];
+            int convChannels = convDesc.Shape[1];
+
+            int timeStepRank = config.SsmConfig?.TimeStepRank ?? 32;
+            int stateSize = config.SsmConfig?.StateSize ?? 128;
+            float[] ssmDtBias = DequantizeNorm(dataBase, tensors[$"{prefix}.ssm_dt.bias"], timeStepRank);
+            float[] ssmA = DequantizeNorm(dataBase, tensors[$"{prefix}.ssm_a"], timeStepRank);
+            float[] ssmNormWeight = DequantizeNorm(dataBase, tensors[$"{prefix}.ssm_norm.weight"], stateSize);
+
+            var (ssmOutPtr, ssmOutQt, ssmOutM, ssmOutK) = LoadLinear(dataBase, tensors[$"{prefix}.ssm_out.weight"]);
+
+            return TransformerLayerWeights.CreateDeltaNet(
+                deltaNetIdx,
+                attnNorm,
+                ffnNorm,
+                gatePtr, gateQt, gateM, gateK,
+                upPtr, upQt, upM, upK,
+                downPtr, downQt, downM, downK,
+                qkvPtr, qkvQt, qkvM, qkvK,
+                gateZPtr, gateZQt, gateZM, gateZK,
+                betaPtr, betaQt, betaM, betaK,
+                alphaPtr, alphaQt, alphaM, alphaK,
+                convPtr, convChannels, convKernel,
+                ssmDtBias, ssmA, ssmNormWeight,
+                ssmOutPtr, ssmOutQt, ssmOutM, ssmOutK,
+                gateBias, upBias, downBias);
+        }
+
+        // Standard or Qwen3.5 Full Attention layer
+        nint qPtr, kPtr, vPtr;
+        QuantizationType qQt, kQt, vQt;
+        int qM, qK, kM, kK, vM, vK;
+
+        if (config.Architecture != Architecture.Qwen35 && tensors.TryGetValue($"{prefix}.attn_qkv.weight", out var qkvDesc))
+        {
+            // Fused QKV (Phi-3 style)
+            nint qkvPtr = dataBase + (nint)qkvDesc.DataOffset;
+            int inputDim = qkvDesc.Shape[0];
+            long rowBytes = Dequantize.RowByteSize(inputDim, qkvDesc.QuantizationType);
+            int qDim = config.NumAttentionHeads * config.HeadDim;
+            int kvDim = config.NumKvHeads * config.HeadDim;
+
+            qPtr = qkvPtr; qQt = qkvDesc.QuantizationType; qM = qDim; qK = inputDim;
+            kPtr = qkvPtr + (nint)(qDim * rowBytes); kQt = qkvDesc.QuantizationType; kM = kvDim; kK = inputDim;
+            vPtr = qkvPtr + (nint)((qDim + kvDim) * rowBytes); vQt = qkvDesc.QuantizationType; vM = kvDim; vK = inputDim;
+        }
+        else
+        {
+            // Separate Q/K/V
+            (qPtr, qQt, qM, qK) = LoadLinear(dataBase, tensors[$"{prefix}.attn_q.weight"]);
+            (kPtr, kQt, kM, kK) = LoadLinear(dataBase, tensors[$"{prefix}.attn_k.weight"]);
+            (vPtr, vQt, vM, vK) = LoadLinear(dataBase, tensors[$"{prefix}.attn_v.weight"]);
+        }
+
+        var (oPtr, oQt, oM, oK) = LoadLinear(dataBase, tensors[$"{prefix}.attn_output.weight"]);
+
+        float[]? qBias = LoadOptionalBias(dataBase, tensors, $"{prefix}.attn_q.bias");
+        float[]? kBias = LoadOptionalBias(dataBase, tensors, $"{prefix}.attn_k.bias");
+        float[]? vBias = LoadOptionalBias(dataBase, tensors, $"{prefix}.attn_v.bias");
+        float[]? oBias = LoadOptionalBias(dataBase, tensors, $"{prefix}.attn_output.bias");
+
+        float[]? qNormWeight = LoadOptionalNorm(dataBase, tensors, $"{prefix}.attn_q_norm.weight", config.HeadDim);
+        float[]? kNormWeight = LoadOptionalNorm(dataBase, tensors, $"{prefix}.attn_k_norm.weight", config.HeadDim);
 
         return new TransformerLayerWeights(
             attnNorm,

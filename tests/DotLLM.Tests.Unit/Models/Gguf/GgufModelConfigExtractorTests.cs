@@ -380,4 +380,57 @@ public class GgufModelConfigExtractorTests
         Assert.Equal(32.0f, config.RoPEConfig.Value.BetaFast);
         Assert.Equal(1.0f, config.RoPEConfig.Value.BetaSlow);
     }
+
+    [Fact]
+    public void Extract_Qwen35_AllFields()
+    {
+        var metadata = BuildMetadata(d =>
+        {
+            d.AddString("general.architecture", "qwen35");
+            d.AddUInt32("qwen35.embedding_length", 2560);
+            d.AddUInt32("qwen35.block_count", 33);
+            d.AddUInt32("qwen35.nextn_predict_layers", 1);
+            d.AddUInt32("qwen35.feed_forward_length", 9216);
+            d.AddUInt32("qwen35.attention.head_count", 16);
+            d.AddUInt32("qwen35.attention.head_count_kv", 4);
+            d.AddUInt32("qwen35.attention.key_length", 256);
+            d.AddUInt32("qwen35.context_length", 262144);
+            d.AddFloat32("qwen35.attention.layer_norm_rms_epsilon", 1e-6f);
+            d.AddUInt32("qwen35.vocab_size", 248320);
+            d.AddFloat32("qwen35.rope.freq_base", 10000000.0f);
+            d.AddUInt32("qwen35.rope.dimension_count", 64);
+            d.AddUInt32("qwen35.full_attention_interval", 4);
+            d.AddUInt32("qwen35.ssm.conv_kernel", 4);
+            d.AddUInt32("qwen35.ssm.inner_size", 4096);
+            d.AddUInt32("qwen35.ssm.state_size", 128);
+            d.AddUInt32("qwen35.ssm.group_count", 16);
+            d.AddUInt32("qwen35.ssm.time_step_rank", 32);
+        });
+
+        var config = GgufModelConfigExtractor.Extract(metadata);
+
+        Assert.Equal(Architecture.Qwen35, config.Architecture);
+        Assert.Equal(2560, config.HiddenSize);
+        Assert.Equal(32, config.NumLayers); // 33 - 1
+        Assert.Equal(9216, config.IntermediateSize);
+        Assert.Equal(16, config.NumAttentionHeads);
+        Assert.Equal(4, config.NumKvHeads);
+        Assert.Equal(256, config.HeadDim);
+        Assert.Equal(1e-6f, config.NormEpsilon);
+        Assert.Equal(248320, config.VocabSize);
+
+        Assert.NotNull(config.RoPEConfig);
+        Assert.Equal(RoPEType.NeoX, config.RoPEConfig.Value.Type);
+        Assert.Equal(64, config.RoPEConfig.Value.DimensionCount);
+        Assert.Equal(10000000.0f, config.RoPEConfig.Value.Theta);
+
+        Assert.NotNull(config.SsmConfig);
+        Assert.Equal(4, config.SsmConfig.Value.FullAttentionInterval);
+        Assert.Equal(4, config.SsmConfig.Value.ConvKernel);
+        Assert.Equal(4096, config.SsmConfig.Value.InnerSize);
+        Assert.Equal(128, config.SsmConfig.Value.StateSize);
+        Assert.Equal(16, config.SsmConfig.Value.GroupCount);
+        Assert.Equal(32, config.SsmConfig.Value.TimeStepRank);
+        Assert.Equal(1, config.SsmConfig.Value.NextnPredictLayers);
+    }
 }

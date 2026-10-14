@@ -23,6 +23,12 @@ public static class GgufModelConfigExtractor
 
         int hiddenSize = (int)metadata.GetUInt32($"{arch}.embedding_length");
         int numLayers = (int)metadata.GetUInt32($"{arch}.block_count");
+        uint nextnLayers = metadata.GetUInt32OrDefault($"{arch}.nextn_predict_layers", 0);
+        if (nextnLayers > 0 && numLayers > (int)nextnLayers)
+        {
+            numLayers -= (int)nextnLayers;
+        }
+
         int intermediateSize = (int)metadata.GetUInt32($"{arch}.feed_forward_length");
         int numAttentionHeads = (int)metadata.GetUInt32($"{arch}.attention.head_count");
         int numKvHeads = (int)metadata.GetUInt32OrDefault($"{arch}.attention.head_count_kv", (uint)numAttentionHeads);
@@ -48,6 +54,30 @@ public static class GgufModelConfigExtractor
 
         RoPEConfig? ropeConfig = ExtractRoPEConfig(metadata, arch, headDim, architecture);
 
+        SsmConfig? ssmConfig = null;
+        if (architecture == Architecture.Qwen35 || metadata.ContainsKey($"{arch}.full_attention_interval"))
+        {
+            int fullAttnInterval = (int)metadata.GetUInt32OrDefault($"{arch}.full_attention_interval", 4);
+            int convKernel = (int)metadata.GetUInt32OrDefault($"{arch}.ssm.conv_kernel", 4);
+            int innerSize = (int)metadata.GetUInt32OrDefault($"{arch}.ssm.inner_size", 4096);
+            int stateSize = (int)metadata.GetUInt32OrDefault($"{arch}.ssm.state_size", 128);
+            int groupCount = (int)metadata.GetUInt32OrDefault($"{arch}.ssm.group_count", 16);
+            int timeStepRank = (int)metadata.GetUInt32OrDefault($"{arch}.ssm.time_step_rank", 32);
+            int[]? dimSections = metadata.ContainsKey($"{arch}.rope.dimension_sections")
+                ? metadata.GetInt32Array($"{arch}.rope.dimension_sections")
+                : null;
+
+            ssmConfig = new SsmConfig(
+                FullAttentionInterval: fullAttnInterval,
+                ConvKernel: convKernel,
+                InnerSize: innerSize,
+                StateSize: stateSize,
+                GroupCount: groupCount,
+                TimeStepRank: timeStepRank,
+                NextnPredictLayers: (int)nextnLayers,
+                RopeDimensionSections: dimSections);
+        }
+
         return new ModelConfig
         {
             Architecture = architecture,
@@ -63,6 +93,7 @@ public static class GgufModelConfigExtractor
             RoPEConfig = ropeConfig,
             PositionEncodingType = ropeConfig.HasValue ? PositionEncodingType.RoPE : PositionEncodingType.None,
             SlidingWindowSize = slidingWindowSize,
+            SsmConfig = ssmConfig,
             ChatTemplate = chatTemplate,
         };
     }
@@ -75,6 +106,7 @@ public static class GgufModelConfigExtractor
             "mistral" or "mistral3" => Architecture.Mistral,
             "phi" or "phi2" or "phi3" => Architecture.Phi,
             "qwen" or "qwen2" or "qwen3" => Architecture.Qwen,
+            "qwen35" or "qwen35moe" or "qwen3next" or "Qwen35" => Architecture.Qwen35,
             "deepseek" or "deepseek2" => Architecture.DeepSeek,
             _ => throw new InvalidDataException($"Unsupported GGUF architecture: '{archString}'.")
         };
@@ -114,7 +146,7 @@ public static class GgufModelConfigExtractor
         // - Qwen/Phi: weights kept in HuggingFace order → non-interleaved (NeoX)
         RoPEType ropeType = architecture switch
         {
-            Architecture.Qwen or Architecture.Phi => RoPEType.NeoX,
+            Architecture.Qwen or Architecture.Phi or Architecture.Qwen35 => RoPEType.NeoX,
             _ => RoPEType.Norm,
         };
 

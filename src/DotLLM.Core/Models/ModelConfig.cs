@@ -63,6 +63,9 @@ public record ModelConfig
     /// <summary>MLA configuration. Only set for DeepSeek-style MLA attention.</summary>
     public MlaConfig? MlaConfig { get; init; }
 
+    /// <summary>SSM / linear attention configuration. Set for hybrid models like Qwen 3.5.</summary>
+    public SsmConfig? SsmConfig { get; init; }
+
     /// <summary>Jinja2 chat template from model metadata. Null if not present.</summary>
     public string? ChatTemplate { get; init; }
 }

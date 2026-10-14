@@ -203,3 +203,4 @@ public class GgufFileTests : IDisposable
         Assert.Contains("power of 2", ex.Message);
     }
 }
+

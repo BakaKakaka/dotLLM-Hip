@@ -37,7 +37,8 @@ public sealed unsafe class HipTransformerModel : IModel, IGpuModelInfo
     public string? VramWarning { get; }
 
     /// <summary>Debug: limit the number of transformer layers processed. 0 = all layers (default). -1 = skip all layers.</summary>
-    internal int DebugMaxLayers { get; set; }
+    public int DebugMaxLayers { get; set; }
+
 
     /// <summary>Debug: override RoPE type. -1 = use model's type (default).</summary>
     internal int DebugRopeTypeOverride { get; set; } = -1;
@@ -99,7 +100,8 @@ public sealed unsafe class HipTransformerModel : IModel, IGpuModelInfo
         // Create scratch buffers
         var state = new HipForwardState(
             config.HiddenSize, config.NumAttentionHeads, config.NumKvHeads,
-            config.HeadDim, config.IntermediateSize, config.VocabSize);
+            config.HeadDim, config.IntermediateSize, config.VocabSize,
+            config.SsmConfig, config.NumLayers);
 
         int ropeDim = config.RoPEConfig?.DimensionCount ?? config.HeadDim;
         if (ropeDim == 0) ropeDim = config.HeadDim;
@@ -133,6 +135,11 @@ public sealed unsafe class HipTransformerModel : IModel, IGpuModelInfo
 
         _state.EnsureCapacity(seqLen);
         nint s = _stream.Handle;
+
+        if (positions.Length > 0 && positions[0] == 0)
+        {
+            _state.ResetRecurrentState(s);
+        }
 
         // 1 & 2. Embedding lookup → FP32 residual stream (D5 mandate)
         if (seqLen == 1)
@@ -210,159 +217,247 @@ public sealed unsafe class HipTransformerModel : IModel, IGpuModelInfo
         {
             ref readonly var lw = ref _weights.Layers[layer];
 
-            // ── ATTENTION BLOCK ──
-            var qQt = lw.QQuant != 0 ? lw.QQuantType : QuantizationType.F16;
-            var kQt = lw.KQuant != 0 ? lw.KQuantType : QuantizationType.F16;
-            var vQt = lw.VQuant != 0 ? lw.VQuantType : QuantizationType.F16;
-
-            bool canFuseQkv = seqLen == 1
-                && qQt == kQt && qQt == vQt
-                && HipKernels.HasFusedQkvGemv(qQt)
-                && (lw.QQuant != 0 || lw.Q != 0)
-                && (lw.KQuant != 0 || lw.K != 0)
-                && (lw.VQuant != 0 || lw.V != 0);
-
-            bool canFuseQk = seqLen == 1
-                && !canFuseQkv
-                && qQt == kQt
-                && HipKernels.HasFusedQkvGemv(qQt)
-                && (lw.QQuant != 0 || lw.Q != 0)
-                && (lw.KQuant != 0 || lw.K != 0);
-
-            nint kDest = _state.K;
-            nint vDest = _state.V;
-            bool directKv = kvCache is HipKvCache && seqLen == 1;
-            if (directKv)
+            if (lw.IsDeltaNet)
             {
-                var hk = (HipKvCache)kvCache!;
-                kDest = hk.GetKeysWritePtr(layer, positions[0]);
-                vDest = hk.GetValuesWritePtr(layer, positions[0]);
-            }
+                // ── GATED DELTANET BLOCK ──
+                int numVHeads = Config.SsmConfig?.TimeStepRank ?? 32;
+                int headKDim = Config.SsmConfig?.StateSize ?? 128;
+                int headVDim = headKDim;
+                int numKHeads = Config.SsmConfig?.GroupCount ?? 16;
+                int qkDim = numKHeads * headKDim;
 
-            if (canFuseQkv)
-            {
-                nint qw = lw.QQuant != 0 ? lw.QQuant : lw.Q;
-                nint kw = lw.KQuant != 0 ? lw.KQuant : lw.K;
-                nint vw = lw.VQuant != 0 ? lw.VQuant : lw.V;
-                nint qb = DebugSkipBias ? 0 : lw.QBias;
-                nint kb = DebugSkipBias ? 0 : lw.KBias;
-                nint vb = DebugSkipBias ? 0 : lw.VBias;
+                int innerSize = numVHeads * headVDim;
 
-                if (HipKernels.HasFusedQkvGemvMmvq(qQt) && lw.QQuant != 0)
+                // 1. Projections
+                Project(lw.QkvQuant, lw.QkvQuantType, lw.Qkv, _state.NormOutput, _state.QkvRaw, lw.QkvOutputDim, lw.QkvInputDim, seqLen);
+                Project(lw.SsmGateQuant, lw.SsmGateQuantType, lw.SsmGate, _state.NormOutput, _state.SsmGateRaw, lw.SsmGateOutputDim, lw.SsmGateInputDim, seqLen);
+                Project(lw.SsmBetaQuant, lw.SsmBetaQuantType, lw.SsmBeta, _state.NormOutput, _state.BetaRaw, lw.SsmBetaOutputDim, lw.SsmBetaInputDim, seqLen);
+                Project(lw.SsmAlphaQuant, lw.SsmAlphaQuantType, lw.SsmAlpha, _state.NormOutput, _state.AlphaRaw, lw.SsmAlphaOutputDim, lw.SsmAlphaInputDim, seqLen);
+
+                nint convState = _state.GetConvState(lw.DeltaNetIndex);
+                nint ssmState = _state.GetSsmState(lw.DeltaNetIndex);
+
+                for (int t = 0; t < seqLen; t++)
                 {
-                    _kernels.LaunchQuantizeQ8_1F16(_state.NormOutput, _state.Q8_1Scratch, lw.QInputDim, s);
-                    _kernels.LaunchFusedQkvGemvMmvq(
-                        qw, kw, vw, qQt,
-                        qb, kb, vb,
-                        _state.Q8_1Scratch, _state.Q, kDest, vDest,
-                        lw.QOutputDim, lw.KOutputDim, lw.VOutputDim, lw.QInputDim, s);
+                    nint qkv_t = _state.QkvRaw + (nint)(t * lw.QkvOutputDim * sizeof(Half));
+                    nint convOut_t = _state.ConvOut + (nint)(t * lw.QkvOutputDim * sizeof(Half));
+                    nint betaRaw_t = _state.BetaRaw + (nint)(t * numVHeads * sizeof(Half));
+                    nint alphaRaw_t = _state.AlphaRaw + (nint)(t * numVHeads * sizeof(Half));
+                    nint ssmGate_t = _state.SsmGateRaw + (nint)(t * innerSize * sizeof(Half));
+                    nint deltaNetOut_t = _state.DeltaNetOut + (nint)(t * innerSize * sizeof(Half));
+                    nint normedOut_t = _state.NormedDeltaNetOut + (nint)(t * innerSize * sizeof(Half));
+
+                    // 2. Conv1D + SiLU (depthwise causal conv over qkv)
+                    _kernels.LaunchCausalConv1dSiLu(qkv_t, lw.SsmConv1d, convState, convOut_t, lw.QkvOutputDim, s);
+
+                    // Split ConvOut into Q [qkDim], K [qkDim], V [innerSize]
+                    nint qConv = convOut_t;
+                    nint kConv = convOut_t + (nint)(qkDim * sizeof(Half));
+                    nint vConv = convOut_t + (nint)(2 * qkDim * sizeof(Half));
+
+                    // 3. L2 Norm on Q and K, scale Q by 1/sqrt(headKDim), and GQA repeat numKHeads -> numVHeads
+                    _kernels.LaunchL2NormAndGqaRepeat(qConv, kConv, _state.QRepeated, _state.KRepeated,
+                        numKHeads, numVHeads, headKDim, 1e-6f, s);
+
+                    // 4. Compute Gates: beta = sigmoid(beta_raw), g = exp(ssm_a * softplus(alpha_raw + dt_bias))
+                    _kernels.LaunchComputeSsmGatesF16(betaRaw_t, alphaRaw_t, lw.SsmA, lw.SsmDtBias,
+                        _state.Beta, _state.G, numVHeads, s);
+
+                    // 5. Recurrent Delta Rule Step
+                    _kernels.LaunchGatedDeltaNetRecurrent(_state.QRepeated, _state.KRepeated, vConv,
+                        _state.Beta, _state.G, ssmState, deltaNetOut_t,
+                        numVHeads, headKDim, headVDim, s);
+
+                    // 6. Gated RMSNorm + SiLU(z)
+                    _kernels.LaunchGatedRmsNormSiLu(deltaNetOut_t, ssmGate_t, lw.SsmNormWeight,
+                        normedOut_t, numVHeads, headVDim, eps, s);
+                }
+
+                // 7. Output projection: ssm_out -> NormOutput
+                Project(lw.SsmOutQuant, lw.SsmOutQuantType, lw.SsmOut, _state.NormedDeltaNetOut,
+                    _state.NormOutput, lw.SsmOutOutputDim, lw.SsmOutInputDim, seqLen);
+
+                // ── FUSED: attention residual + FFN norm (Residual stays FP32) ──
+                _kernels.LaunchFusedAddRmsNormF32ResW16(_state.Residual, _state.NormOutput, lw.FfnNormWeight,
+                    _state.NormOutput, hiddenSize, eps, seqLen, s);
+            }
+            else
+            {
+                // ── ATTENTION BLOCK ──
+                bool isQwen35FullAttn = Config.Architecture == Architecture.Qwen35;
+
+                nint kDest = _state.K;
+                nint vDest = _state.V;
+                bool directKv = kvCache is HipKvCache && seqLen == 1;
+                if (directKv)
+                {
+                    var hk = (HipKvCache)kvCache!;
+                    kDest = hk.GetKeysWritePtr(layer, positions[0]);
+                    vDest = hk.GetValuesWritePtr(layer, positions[0]);
+                }
+
+                if (isQwen35FullAttn)
+                {
+                    // 2x Q projection: outputs [numHeads, headDim * 2] (Q + Gate)
+                    Project(lw.QQuant, lw.QQuantType, lw.Q, _state.NormOutput, _state.QgScratch, lw.QOutputDim, lw.QInputDim, seqLen);
+                    _kernels.LaunchDeinterleaveQGate(_state.QgScratch, _state.Q, _state.AttentionGate,
+                        seqLen * numHeads, headDim, s);
+
+                    Project(lw.KQuant, lw.KQuantType, lw.K, _state.NormOutput, kDest, lw.KOutputDim, lw.KInputDim, seqLen);
+                    Project(lw.VQuant, lw.VQuantType, lw.V, _state.NormOutput, vDest, lw.VOutputDim, lw.VInputDim, seqLen);
                 }
                 else
                 {
-                    _kernels.LaunchFusedQkvGemv(
-                        qw, kw, vw, qQt,
-                        qb, kb, vb,
-                        _state.NormOutput, _state.Q, kDest, vDest,
-                        lw.QOutputDim, lw.KOutputDim, lw.VOutputDim, lw.QInputDim, s);
-                }
-            }
-            else if (canFuseQk)
-            {
-                nint qw = lw.QQuant != 0 ? lw.QQuant : lw.Q;
-                nint kw = lw.KQuant != 0 ? lw.KQuant : lw.K;
-                nint qb = DebugSkipBias ? 0 : lw.QBias;
-                nint kb = DebugSkipBias ? 0 : lw.KBias;
+                    var qQt = lw.QQuant != 0 ? lw.QQuantType : QuantizationType.F16;
+                    var kQt = lw.KQuant != 0 ? lw.KQuantType : QuantizationType.F16;
+                    var vQt = lw.VQuant != 0 ? lw.VQuantType : QuantizationType.F16;
 
-                if (HipKernels.HasFusedQkvGemvMmvq(qQt) && lw.QQuant != 0)
+                    bool canFuseQkv = seqLen == 1
+                        && qQt == kQt && qQt == vQt
+                        && HipKernels.HasFusedQkvGemv(qQt)
+                        && (lw.QQuant != 0 || lw.Q != 0)
+                        && (lw.KQuant != 0 || lw.K != 0)
+                        && (lw.VQuant != 0 || lw.V != 0);
+
+                    bool canFuseQk = seqLen == 1
+                        && !canFuseQkv
+                        && qQt == kQt
+                        && HipKernels.HasFusedQkvGemv(qQt)
+                        && (lw.QQuant != 0 || lw.Q != 0)
+                        && (lw.KQuant != 0 || lw.K != 0);
+
+                    if (canFuseQkv)
+                    {
+                        nint qw = lw.QQuant != 0 ? lw.QQuant : lw.Q;
+                        nint kw = lw.KQuant != 0 ? lw.KQuant : lw.K;
+                        nint vw = lw.VQuant != 0 ? lw.VQuant : lw.V;
+                        nint qb = DebugSkipBias ? 0 : lw.QBias;
+                        nint kb = DebugSkipBias ? 0 : lw.KBias;
+                        nint vb = DebugSkipBias ? 0 : lw.VBias;
+
+                        if (HipKernels.HasFusedQkvGemvMmvq(qQt) && lw.QQuant != 0)
+                        {
+                            _kernels.LaunchQuantizeQ8_1F16(_state.NormOutput, _state.Q8_1Scratch, lw.QInputDim, s);
+                            _kernels.LaunchFusedQkvGemvMmvq(
+                                qw, kw, vw, qQt,
+                                qb, kb, vb,
+                                _state.Q8_1Scratch, _state.Q, kDest, vDest,
+                                lw.QOutputDim, lw.KOutputDim, lw.VOutputDim, lw.QInputDim, s);
+                        }
+                        else
+                        {
+                            _kernels.LaunchFusedQkvGemv(
+                                qw, kw, vw, qQt,
+                                qb, kb, vb,
+                                _state.NormOutput, _state.Q, kDest, vDest,
+                                lw.QOutputDim, lw.KOutputDim, lw.VOutputDim, lw.QInputDim, s);
+                        }
+                    }
+                    else if (canFuseQk)
+                    {
+                        nint qw = lw.QQuant != 0 ? lw.QQuant : lw.Q;
+                        nint kw = lw.KQuant != 0 ? lw.KQuant : lw.K;
+                        nint qb = DebugSkipBias ? 0 : lw.QBias;
+                        nint kb = DebugSkipBias ? 0 : lw.KBias;
+
+                        if (HipKernels.HasFusedQkvGemvMmvq(qQt) && lw.QQuant != 0)
+                        {
+                            _kernels.LaunchQuantizeQ8_1F16(_state.NormOutput, _state.Q8_1Scratch, lw.QInputDim, s);
+                            _kernels.LaunchFusedQkvGemvMmvq(
+                                qw, kw, 0, qQt,
+                                qb, kb, 0,
+                                _state.Q8_1Scratch, _state.Q, kDest, 0,
+                                lw.QOutputDim, lw.KOutputDim, 0, lw.QInputDim, s);
+                        }
+                        else
+                        {
+                            _kernels.LaunchFusedQkvGemv(
+                                qw, kw, 0, qQt,
+                                qb, kb, 0,
+                                _state.NormOutput, _state.Q, kDest, 0,
+                                lw.QOutputDim, lw.KOutputDim, 0, lw.QInputDim, s);
+                        }
+
+                        Project(lw.VQuant, lw.VQuantType, lw.V, _state.NormOutput, vDest, lw.VOutputDim, lw.VInputDim, seqLen);
+                        if (lw.VBias != 0 && !DebugSkipBias) _kernels.LaunchBiasAddF16(vDest, lw.VBias, lw.VOutputDim, seqLen, s);
+                    }
+                    else
+                    {
+                        Project(lw.QQuant, lw.QQuantType, lw.Q, _state.NormOutput, _state.Q, lw.QOutputDim, lw.QInputDim, seqLen);
+                        Project(lw.KQuant, lw.KQuantType, lw.K, _state.NormOutput, kDest, lw.KOutputDim, lw.KInputDim, seqLen);
+                        Project(lw.VQuant, lw.VQuantType, lw.V, _state.NormOutput, vDest, lw.VOutputDim, lw.VInputDim, seqLen);
+
+                        // Optional biases (FP16)
+                        if (lw.QBias != 0 && !DebugSkipBias) _kernels.LaunchBiasAddF16(_state.Q, lw.QBias, lw.QOutputDim, seqLen, s);
+                        if (lw.KBias != 0 && !DebugSkipBias) _kernels.LaunchBiasAddF16(kDest, lw.KBias, lw.KOutputDim, seqLen, s);
+                        if (lw.VBias != 0 && !DebugSkipBias) _kernels.LaunchBiasAddF16(vDest, lw.VBias, lw.VOutputDim, seqLen, s);
+                    }
+                }
+
+                // Optional QK-norms (FP16)
+                if (lw.QNormWeight != 0)
+                    _kernels.LaunchPerHeadRmsNormF16(_state.Q, lw.QNormWeight, eps, numHeads, headDim, seqLen, s);
+                if (lw.KNormWeight != 0)
+                    _kernels.LaunchPerHeadRmsNormF16(kDest, lw.KNormWeight, eps, numKvHeads, headDim, seqLen, s);
+
+                // RoPE (FP16, in-place on Q and K)
+                int effectiveRopeType = DebugRopeTypeOverride >= 0 ? DebugRopeTypeOverride : _ropeType;
+                if (seqLen == 1)
                 {
-                    _kernels.LaunchQuantizeQ8_1F16(_state.NormOutput, _state.Q8_1Scratch, lw.QInputDim, s);
-                    _kernels.LaunchFusedQkvGemvMmvq(
-                        qw, kw, 0, qQt,
-                        qb, kb, 0,
-                        _state.Q8_1Scratch, _state.Q, kDest, 0,
-                        lw.QOutputDim, lw.KOutputDim, 0, lw.QInputDim, s);
+                    _kernels.LaunchRoPEDecodeF16(_state.Q, kDest, positions[0],
+                        numHeads, numKvHeads, headDim,
+                        _ropeDim, _ropeTheta, effectiveRopeType, s);
                 }
                 else
                 {
-                    _kernels.LaunchFusedQkvGemv(
-                        qw, kw, 0, qQt,
-                        qb, kb, 0,
-                        _state.NormOutput, _state.Q, kDest, 0,
-                        lw.QOutputDim, lw.KOutputDim, 0, lw.QInputDim, s);
+                    _kernels.LaunchRoPEF16(_state.Q, kDest, _state.PositionsDevice,
+                        seqLen, numHeads, numKvHeads, headDim,
+                        _ropeDim, _ropeTheta, effectiveRopeType, s);
                 }
 
-                Project(lw.VQuant, lw.VQuantType, lw.V, _state.NormOutput, vDest, lw.VOutputDim, lw.VInputDim, seqLen);
-                if (lw.VBias != 0 && !DebugSkipBias) _kernels.LaunchBiasAddF16(vDest, lw.VBias, lw.VOutputDim, seqLen, s);
+                // KV-cache update + Attention
+                if (directKv)
+                {
+                    var hk = (HipKvCache)kvCache!;
+                    hk.AdvancePosition(positions[0]);
+                    int seqKv = hk.CurrentLength;
+
+                    _kernels.LaunchAttention(_state.Q, hk.GetKeysPtr(layer),
+                        hk.GetValuesPtr(layer), _state.AttnOutput,
+                        seqLen, seqKv, numHeads, numKvHeads, headDim,
+                        positions[0], slidingWindow, s);
+                }
+                else if (kvCache is HipKvCache hipKvCache)
+                {
+                    hipKvCache.UpdateDevice(_state.K, _state.V, positions, seqLen, layer, s);
+                    int seqKv = hipKvCache.CurrentLength;
+
+                    _kernels.LaunchAttention(_state.Q, hipKvCache.GetKeysPtr(layer),
+                        hipKvCache.GetValuesPtr(layer), _state.AttnOutput,
+                        seqLen, seqKv, numHeads, numKvHeads, headDim,
+                        positions[0], slidingWindow, s);
+                }
+                else
+                {
+                    _kernels.LaunchAttention(_state.Q, _state.K, _state.V, _state.AttnOutput,
+                        seqLen, seqLen, numHeads, numKvHeads, headDim,
+                        0, slidingWindow, s);
+                }
+
+                // If Qwen3.5, multiply attention output by Sigmoid(AttentionGate)
+                if (isQwen35FullAttn)
+                {
+                    _kernels.LaunchMulSigmoidGate(_state.AttnOutput, _state.AttentionGate, seqLen * numHeads * headDim, s);
+                }
+
+                // O projection → NormOutput
+                Project(lw.OQuant, lw.OQuantType, lw.O, _state.AttnOutput, _state.NormOutput, lw.OOutputDim, lw.OInputDim, seqLen);
+                if (lw.OBias != 0) _kernels.LaunchBiasAddF16(_state.NormOutput, lw.OBias, lw.OOutputDim, seqLen, s);
+
+                // ── FUSED: attention residual + FFN norm (Residual stays FP32) ──
+                _kernels.LaunchFusedAddRmsNormF32ResW16(_state.Residual, _state.NormOutput, lw.FfnNormWeight, _state.NormOutput,
+                    hiddenSize, eps, seqLen, s);
             }
-            else
-            {
-                Project(lw.QQuant, lw.QQuantType, lw.Q, _state.NormOutput, _state.Q, lw.QOutputDim, lw.QInputDim, seqLen);
-                Project(lw.KQuant, lw.KQuantType, lw.K, _state.NormOutput, kDest, lw.KOutputDim, lw.KInputDim, seqLen);
-                Project(lw.VQuant, lw.VQuantType, lw.V, _state.NormOutput, vDest, lw.VOutputDim, lw.VInputDim, seqLen);
-
-                // Optional biases (FP16)
-                if (lw.QBias != 0 && !DebugSkipBias) _kernels.LaunchBiasAddF16(_state.Q, lw.QBias, lw.QOutputDim, seqLen, s);
-                if (lw.KBias != 0 && !DebugSkipBias) _kernels.LaunchBiasAddF16(kDest, lw.KBias, lw.KOutputDim, seqLen, s);
-                if (lw.VBias != 0 && !DebugSkipBias) _kernels.LaunchBiasAddF16(vDest, lw.VBias, lw.VOutputDim, seqLen, s);
-            }
-
-            // Optional QK-norms (FP16)
-            if (lw.QNormWeight != 0)
-                _kernels.LaunchPerHeadRmsNormF16(_state.Q, lw.QNormWeight, eps, numHeads, headDim, seqLen, s);
-            if (lw.KNormWeight != 0)
-                _kernels.LaunchPerHeadRmsNormF16(kDest, lw.KNormWeight, eps, numKvHeads, headDim, seqLen, s);
-
-            // RoPE (FP16, in-place on Q and K)
-            int effectiveRopeType = DebugRopeTypeOverride >= 0 ? DebugRopeTypeOverride : _ropeType;
-            if (seqLen == 1)
-            {
-                _kernels.LaunchRoPEDecodeF16(_state.Q, kDest, positions[0],
-                    numHeads, numKvHeads, headDim,
-                    _ropeDim, _ropeTheta, effectiveRopeType, s);
-            }
-            else
-            {
-                _kernels.LaunchRoPEF16(_state.Q, kDest, _state.PositionsDevice,
-                    seqLen, numHeads, numKvHeads, headDim,
-                    _ropeDim, _ropeTheta, effectiveRopeType, s);
-            }
-
-            // KV-cache update + Attention
-            if (directKv)
-            {
-                var hk = (HipKvCache)kvCache!;
-                hk.AdvancePosition(positions[0]);
-                int seqKv = hk.CurrentLength;
-
-                _kernels.LaunchAttention(_state.Q, hk.GetKeysPtr(layer),
-                    hk.GetValuesPtr(layer), _state.AttnOutput,
-                    seqLen, seqKv, numHeads, numKvHeads, headDim,
-                    positions[0], slidingWindow, s);
-            }
-            else if (kvCache is HipKvCache hipKvCache)
-            {
-                hipKvCache.UpdateDevice(_state.K, _state.V, positions, seqLen, layer, s);
-                int seqKv = hipKvCache.CurrentLength;
-
-                _kernels.LaunchAttention(_state.Q, hipKvCache.GetKeysPtr(layer),
-                    hipKvCache.GetValuesPtr(layer), _state.AttnOutput,
-                    seqLen, seqKv, numHeads, numKvHeads, headDim,
-                    positions[0], slidingWindow, s);
-            }
-            else
-            {
-                _kernels.LaunchAttention(_state.Q, _state.K, _state.V, _state.AttnOutput,
-                    seqLen, seqLen, numHeads, numKvHeads, headDim,
-                    0, slidingWindow, s);
-            }
-
-            // O projection → NormOutput
-            Project(lw.OQuant, lw.OQuantType, lw.O, _state.AttnOutput, _state.NormOutput, lw.OOutputDim, lw.OInputDim, seqLen);
-            if (lw.OBias != 0) _kernels.LaunchBiasAddF16(_state.NormOutput, lw.OBias, lw.OOutputDim, seqLen, s);
-
-            // ── FUSED: attention residual + FFN norm (Residual stays FP32) ──
-            _kernels.LaunchFusedAddRmsNormF32ResW16(_state.Residual, _state.NormOutput, lw.FfnNormWeight, _state.NormOutput,
-                hiddenSize, eps, seqLen, s);
 
             // ── FFN BLOCK ──
             var gateQt = lw.GateQuant != 0 ? lw.GateQuantType : QuantizationType.F16;
@@ -517,7 +612,8 @@ public sealed unsafe class HipTransformerModel : IModel, IGpuModelInfo
     public HipKvCache CreateKvCache(int maxSeqLen)
     {
         HipApi.hipSetDevice(_deviceId).ThrowOnError();
-        return new HipKvCache(Config.NumLayers, Config.NumKvHeads, Config.HeadDim, maxSeqLen);
+        int fullAttentionInterval = Config.SsmConfig?.FullAttentionInterval ?? 0;
+        return new HipKvCache(Config.NumLayers, Config.NumKvHeads, Config.HeadDim, maxSeqLen, fullAttentionInterval);
     }
 
     /// <inheritdoc/>

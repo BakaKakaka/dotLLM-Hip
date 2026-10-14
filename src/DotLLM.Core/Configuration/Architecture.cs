@@ -18,5 +18,8 @@ public enum Architecture
     Qwen,
 
     /// <summary>DeepSeek family.</summary>
-    DeepSeek
+    DeepSeek,
+
+    /// <summary>Alibaba Qwen 3.5 hybrid DeltaNet/Attention family.</summary>
+    Qwen35
 }

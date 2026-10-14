@@ -14,6 +14,9 @@ namespace DotLLM.Hip;
 /// </summary>
 internal readonly struct HipLayerWeights
 {
+    public readonly bool IsDeltaNet;
+    public readonly int DeltaNetIndex;
+
     // FP16 dequantized weights on device [outputDim, inputDim] (0 when using on-the-fly dequant or GEMV)
     public readonly nint Q, K, V, O, Gate, Up, Down;
 
@@ -25,6 +28,22 @@ internal readonly struct HipLayerWeights
     public readonly int VOutputDim, VInputDim, OOutputDim, OInputDim;
     public readonly int GateOutputDim, GateInputDim, UpOutputDim, UpInputDim;
     public readonly int DownOutputDim, DownInputDim;
+
+    // DeltaNet weights on device
+    public readonly nint Qkv, SsmGate, SsmBeta, SsmAlpha, SsmOut;
+    public readonly nint QkvQuant, SsmGateQuant, SsmBetaQuant, SsmAlphaQuant, SsmOutQuant;
+    public readonly QuantizationType QkvQuantType, SsmGateQuantType, SsmBetaQuantType, SsmAlphaQuantType, SsmOutQuantType;
+    public readonly int QkvOutputDim, QkvInputDim;
+    public readonly int SsmGateOutputDim, SsmGateInputDim;
+    public readonly int SsmBetaOutputDim, SsmBetaInputDim;
+    public readonly int SsmAlphaOutputDim, SsmAlphaInputDim;
+    public readonly int SsmOutOutputDim, SsmOutInputDim;
+
+    // DeltaNet parameter vectors on device (F32)
+    public readonly nint SsmConv1d;     // float* [convKernel, convChannels]
+    public readonly nint SsmDtBias;     // float* [timeStepRank]
+    public readonly nint SsmA;          // float* [timeStepRank]
+    public readonly nint SsmNormWeight; // float* [stateSize]
 
     // Norm weights on device (FP16)
     public readonly nint AttnNormWeight, FfnNormWeight;
@@ -48,6 +67,8 @@ internal readonly struct HipLayerWeights
         nint gateQuant, QuantizationType gateQt, nint upQuant, QuantizationType upQt,
         nint downQuant, QuantizationType downQt)
     {
+        IsDeltaNet = false;
+        DeltaNetIndex = -1;
         Q = q; QOutputDim = qOut; QInputDim = qIn;
         K = k; KOutputDim = kOut; KInputDim = kIn;
         V = v; VOutputDim = vOut; VInputDim = vIn;
@@ -64,6 +85,79 @@ internal readonly struct HipLayerWeights
         GateQuant = gateQuant; GateQuantType = gateQt;
         UpQuant = upQuant; UpQuantType = upQt;
         DownQuant = downQuant; DownQuantType = downQt;
+
+        Qkv = 0; QkvQuant = 0; QkvQuantType = default; QkvOutputDim = 0; QkvInputDim = 0;
+        SsmGate = 0; SsmGateQuant = 0; SsmGateQuantType = default; SsmGateOutputDim = 0; SsmGateInputDim = 0;
+        SsmBeta = 0; SsmBetaQuant = 0; SsmBetaQuantType = default; SsmBetaOutputDim = 0; SsmBetaInputDim = 0;
+        SsmAlpha = 0; SsmAlphaQuant = 0; SsmAlphaQuantType = default; SsmAlphaOutputDim = 0; SsmAlphaInputDim = 0;
+        SsmOut = 0; SsmOutQuant = 0; SsmOutQuantType = default; SsmOutOutputDim = 0; SsmOutInputDim = 0;
+        SsmConv1d = 0; SsmDtBias = 0; SsmA = 0; SsmNormWeight = 0;
+    }
+
+    private HipLayerWeights(
+        int deltaNetIndex,
+        nint qkv, int qkvOut, int qkvIn, nint qkvQuant, QuantizationType qkvQt,
+        nint ssmGate, int ssmGateOut, int ssmGateIn, nint ssmGateQuant, QuantizationType ssmGateQt,
+        nint ssmBeta, int ssmBetaOut, int ssmBetaIn, nint ssmBetaQuant, QuantizationType ssmBetaQt,
+        nint ssmAlpha, int ssmAlphaOut, int ssmAlphaIn, nint ssmAlphaQuant, QuantizationType ssmAlphaQt,
+        nint ssmConv1d, nint ssmDtBias, nint ssmA, nint ssmNormWeight,
+        nint ssmOut, int ssmOutOut, int ssmOutIn, nint ssmOutQuant, QuantizationType ssmOutQt,
+        nint gate, int gateOut, int gateIn, nint gateQuant, QuantizationType gateQt,
+        nint up, int upOut, int upIn, nint upQuant, QuantizationType upQt,
+        nint down, int downOut, int downIn, nint downQuant, QuantizationType downQt,
+        nint attnNorm, nint ffnNorm,
+        nint gateBias, nint upBias, nint downBias)
+    {
+        IsDeltaNet = true;
+        DeltaNetIndex = deltaNetIndex;
+        Qkv = qkv; QkvOutputDim = qkvOut; QkvInputDim = qkvIn; QkvQuant = qkvQuant; QkvQuantType = qkvQt;
+        SsmGate = ssmGate; SsmGateOutputDim = ssmGateOut; SsmGateInputDim = ssmGateIn; SsmGateQuant = ssmGateQuant; SsmGateQuantType = ssmGateQt;
+        SsmBeta = ssmBeta; SsmBetaOutputDim = ssmBetaOut; SsmBetaInputDim = ssmBetaIn; SsmBetaQuant = ssmBetaQuant; SsmBetaQuantType = ssmBetaQt;
+        SsmAlpha = ssmAlpha; SsmAlphaOutputDim = ssmAlphaOut; SsmAlphaInputDim = ssmAlphaIn; SsmAlphaQuant = ssmAlphaQuant; SsmAlphaQuantType = ssmAlphaQt;
+        SsmConv1d = ssmConv1d; SsmDtBias = ssmDtBias; SsmA = ssmA; SsmNormWeight = ssmNormWeight;
+        SsmOut = ssmOut; SsmOutOutputDim = ssmOutOut; SsmOutInputDim = ssmOutIn; SsmOutQuant = ssmOutQuant; SsmOutQuantType = ssmOutQt;
+        Gate = gate; GateOutputDim = gateOut; GateInputDim = gateIn; GateQuant = gateQuant; GateQuantType = gateQt;
+        Up = up; UpOutputDim = upOut; UpInputDim = upIn; UpQuant = upQuant; UpQuantType = upQt;
+        Down = down; DownOutputDim = downOut; DownInputDim = downIn; DownQuant = downQuant; DownQuantType = downQt;
+        AttnNormWeight = attnNorm; FfnNormWeight = ffnNorm;
+        GateBias = gateBias; UpBias = upBias; DownBias = downBias;
+
+        Q = 0; K = 0; V = 0; O = 0;
+        QQuant = 0; KQuant = 0; VQuant = 0; OQuant = 0;
+        QQuantType = default; KQuantType = default; VQuantType = default; OQuantType = default;
+        QOutputDim = 0; QInputDim = 0; KOutputDim = 0; KInputDim = 0;
+        VOutputDim = 0; VInputDim = 0; OOutputDim = 0; OInputDim = 0;
+        QNormWeight = 0; KNormWeight = 0;
+        QBias = 0; KBias = 0; VBias = 0; OBias = 0;
+    }
+
+    public static HipLayerWeights CreateDeltaNet(
+        int deltaNetIndex,
+        nint qkv, int qkvOut, int qkvIn, nint qkvQuant, QuantizationType qkvQt,
+        nint ssmGate, int ssmGateOut, int ssmGateIn, nint ssmGateQuant, QuantizationType ssmGateQt,
+        nint ssmBeta, int ssmBetaOut, int ssmBetaIn, nint ssmBetaQuant, QuantizationType ssmBetaQt,
+        nint ssmAlpha, int ssmAlphaOut, int ssmAlphaIn, nint ssmAlphaQuant, QuantizationType ssmAlphaQt,
+        nint ssmConv1d, nint ssmDtBias, nint ssmA, nint ssmNormWeight,
+        nint ssmOut, int ssmOutOut, int ssmOutIn, nint ssmOutQuant, QuantizationType ssmOutQt,
+        nint gate, int gateOut, int gateIn, nint gateQuant, QuantizationType gateQt,
+        nint up, int upOut, int upIn, nint upQuant, QuantizationType upQt,
+        nint down, int downOut, int downIn, nint downQuant, QuantizationType downQt,
+        nint attnNorm, nint ffnNorm,
+        nint gateBias, nint upBias, nint downBias)
+    {
+        return new HipLayerWeights(
+            deltaNetIndex,
+            qkv, qkvOut, qkvIn, qkvQuant, qkvQt,
+            ssmGate, ssmGateOut, ssmGateIn, ssmGateQuant, ssmGateQt,
+            ssmBeta, ssmBetaOut, ssmBetaIn, ssmBetaQuant, ssmBetaQt,
+            ssmAlpha, ssmAlphaOut, ssmAlphaIn, ssmAlphaQuant, ssmAlphaQt,
+            ssmConv1d, ssmDtBias, ssmA, ssmNormWeight,
+            ssmOut, ssmOutOut, ssmOutIn, ssmOutQuant, ssmOutQt,
+            gate, gateOut, gateIn, gateQuant, gateQt,
+            up, upOut, upIn, upQuant, upQt,
+            down, downOut, downIn, downQuant, downQt,
+            attnNorm, ffnNorm,
+            gateBias, upBias, downBias);
     }
 }
 
@@ -129,10 +223,22 @@ internal sealed class HipWeights : IDisposable
         for (int i = 0; i < config.NumLayers; i++)
         {
             ref readonly var lw = ref cpuWeights.Layers[i];
-            estimatedWeightBytes += Dequantize.RowByteSize(lw.QInputDim, lw.QQuantType) * lw.QOutputDim;
-            estimatedWeightBytes += Dequantize.RowByteSize(lw.KInputDim, lw.KQuantType) * lw.KOutputDim;
-            estimatedWeightBytes += Dequantize.RowByteSize(lw.VInputDim, lw.VQuantType) * lw.VOutputDim;
-            estimatedWeightBytes += Dequantize.RowByteSize(lw.OInputDim, lw.OQuantType) * lw.OOutputDim;
+            if (lw.IsDeltaNet)
+            {
+                estimatedWeightBytes += Dequantize.RowByteSize(lw.QkvInputDim, lw.QkvQuantType) * lw.QkvOutputDim;
+                estimatedWeightBytes += Dequantize.RowByteSize(lw.SsmGateInputDim, lw.SsmGateQuantType) * lw.SsmGateOutputDim;
+                estimatedWeightBytes += Dequantize.RowByteSize(lw.SsmBetaInputDim, lw.SsmBetaQuantType) * lw.SsmBetaOutputDim;
+                estimatedWeightBytes += Dequantize.RowByteSize(lw.SsmAlphaInputDim, lw.SsmAlphaQuantType) * lw.SsmAlphaOutputDim;
+                estimatedWeightBytes += Dequantize.RowByteSize(lw.SsmOutInputDim, lw.SsmOutQuantType) * lw.SsmOutOutputDim;
+                estimatedWeightBytes += (long)lw.SsmConv1dChannels * lw.SsmConv1dKernel * sizeof(float);
+            }
+            else
+            {
+                estimatedWeightBytes += Dequantize.RowByteSize(lw.QInputDim, lw.QQuantType) * lw.QOutputDim;
+                estimatedWeightBytes += Dequantize.RowByteSize(lw.KInputDim, lw.KQuantType) * lw.KOutputDim;
+                estimatedWeightBytes += Dequantize.RowByteSize(lw.VInputDim, lw.VQuantType) * lw.VOutputDim;
+                estimatedWeightBytes += Dequantize.RowByteSize(lw.OInputDim, lw.OQuantType) * lw.OOutputDim;
+            }
             estimatedWeightBytes += Dequantize.RowByteSize(lw.GateInputDim, lw.GateQuantType) * lw.GateOutputDim;
             estimatedWeightBytes += Dequantize.RowByteSize(lw.UpInputDim, lw.UpQuantType) * lw.UpOutputDim;
             estimatedWeightBytes += Dequantize.RowByteSize(lw.DownInputDim, lw.DownQuantType) * lw.DownOutputDim;
@@ -184,19 +290,11 @@ internal sealed class HipWeights : IDisposable
         {
             ref readonly var lw = ref cpuWeights.Layers[i];
 
-            nint q = SkipFp16(lw.QQuantType) ? 0 : UploadAndDequant(lw.QWeight, lw.QQuantType, lw.QOutputDim, lw.QInputDim, allocs, kernels, stream);
-            nint k = SkipFp16(lw.KQuantType) ? 0 : UploadAndDequant(lw.KWeight, lw.KQuantType, lw.KOutputDim, lw.KInputDim, allocs, kernels, stream);
-            nint v = SkipFp16(lw.VQuantType) ? 0 : UploadAndDequant(lw.VWeight, lw.VQuantType, lw.VOutputDim, lw.VInputDim, allocs, kernels, stream);
-            nint o = SkipFp16(lw.OQuantType) ? 0 : UploadAndDequant(lw.OWeight, lw.OQuantType, lw.OOutputDim, lw.OInputDim, allocs, kernels, stream);
             nint gate = SkipFp16(lw.GateQuantType) ? 0 : UploadAndDequant(lw.GateWeight, lw.GateQuantType, lw.GateOutputDim, lw.GateInputDim, allocs, kernels, stream);
             nint up = SkipFp16(lw.UpQuantType) ? 0 : UploadAndDequant(lw.UpWeight, lw.UpQuantType, lw.UpOutputDim, lw.UpInputDim, allocs, kernels, stream);
             nint down = SkipFp16(lw.DownQuantType) ? 0 : UploadAndDequant(lw.DownWeight, lw.DownQuantType, lw.DownOutputDim, lw.DownInputDim, allocs, kernels, stream);
 
             // Upload raw quantized weights (single copy on device)
-            nint qQuant = UploadQuantized(lw.QWeight, lw.QQuantType, lw.QOutputDim, lw.QInputDim, allocs);
-            nint kQuant = UploadQuantized(lw.KWeight, lw.KQuantType, lw.KOutputDim, lw.KInputDim, allocs);
-            nint vQuant = UploadQuantized(lw.VWeight, lw.VQuantType, lw.VOutputDim, lw.VInputDim, allocs);
-            nint oQuant = UploadQuantized(lw.OWeight, lw.OQuantType, lw.OOutputDim, lw.OInputDim, allocs);
             nint gateQuant = UploadQuantized(lw.GateWeight, lw.GateQuantType, lw.GateOutputDim, lw.GateInputDim, allocs);
             nint upQuant = UploadQuantized(lw.UpWeight, lw.UpQuantType, lw.UpOutputDim, lw.UpInputDim, allocs);
             nint downQuant = UploadQuantized(lw.DownWeight, lw.DownQuantType, lw.DownOutputDim, lw.DownInputDim, allocs);
@@ -204,28 +302,80 @@ internal sealed class HipWeights : IDisposable
             nint attnNorm = UploadNormWeight(lw.AttnNormWeight, allocs);
             nint ffnNorm = UploadNormWeight(lw.FfnNormWeight, allocs);
 
-            nint qNorm = lw.QNormWeight is not null ? UploadNormWeight(lw.QNormWeight, allocs) : 0;
-            nint kNorm = lw.KNormWeight is not null ? UploadNormWeight(lw.KNormWeight, allocs) : 0;
-
-            nint qBias = UploadBias(lw.QBias, allocs);
-            nint kBias = UploadBias(lw.KBias, allocs);
-            nint vBias = UploadBias(lw.VBias, allocs);
-            nint oBias = UploadBias(lw.OBias, allocs);
             nint gateBias = UploadBias(lw.GateBias, allocs);
             nint upBias = UploadBias(lw.UpBias, allocs);
             nint downBias = UploadBias(lw.DownBias, allocs);
 
-            layers[i] = new HipLayerWeights(
-                q, lw.QOutputDim, lw.QInputDim, k, lw.KOutputDim, lw.KInputDim,
-                v, lw.VOutputDim, lw.VInputDim, o, lw.OOutputDim, lw.OInputDim,
-                gate, lw.GateOutputDim, lw.GateInputDim, up, lw.UpOutputDim, lw.UpInputDim,
-                down, lw.DownOutputDim, lw.DownInputDim,
-                attnNorm, ffnNorm, qNorm, kNorm,
-                qBias, kBias, vBias, oBias, gateBias, upBias, downBias,
-                qQuant, lw.QQuantType, kQuant, lw.KQuantType,
-                vQuant, lw.VQuantType, oQuant, lw.OQuantType,
-                gateQuant, lw.GateQuantType, upQuant, lw.UpQuantType,
-                downQuant, lw.DownQuantType);
+            if (lw.IsDeltaNet)
+            {
+                nint qkv = SkipFp16(lw.QkvQuantType) ? 0 : UploadAndDequant(lw.QkvWeight, lw.QkvQuantType, lw.QkvOutputDim, lw.QkvInputDim, allocs, kernels, stream);
+                nint qkvQuant = UploadQuantized(lw.QkvWeight, lw.QkvQuantType, lw.QkvOutputDim, lw.QkvInputDim, allocs);
+
+                nint ssmGate = SkipFp16(lw.SsmGateQuantType) ? 0 : UploadAndDequant(lw.SsmGateWeight, lw.SsmGateQuantType, lw.SsmGateOutputDim, lw.SsmGateInputDim, allocs, kernels, stream);
+                nint ssmGateQuant = UploadQuantized(lw.SsmGateWeight, lw.SsmGateQuantType, lw.SsmGateOutputDim, lw.SsmGateInputDim, allocs);
+
+                nint ssmBeta = SkipFp16(lw.SsmBetaQuantType) ? 0 : UploadAndDequant(lw.SsmBetaWeight, lw.SsmBetaQuantType, lw.SsmBetaOutputDim, lw.SsmBetaInputDim, allocs, kernels, stream);
+                nint ssmBetaQuant = UploadQuantized(lw.SsmBetaWeight, lw.SsmBetaQuantType, lw.SsmBetaOutputDim, lw.SsmBetaInputDim, allocs);
+
+                nint ssmAlpha = SkipFp16(lw.SsmAlphaQuantType) ? 0 : UploadAndDequant(lw.SsmAlphaWeight, lw.SsmAlphaQuantType, lw.SsmAlphaOutputDim, lw.SsmAlphaInputDim, allocs, kernels, stream);
+                nint ssmAlphaQuant = UploadQuantized(lw.SsmAlphaWeight, lw.SsmAlphaQuantType, lw.SsmAlphaOutputDim, lw.SsmAlphaInputDim, allocs);
+
+                long convBytes = (long)lw.SsmConv1dChannels * lw.SsmConv1dKernel * sizeof(float);
+                nint ssmConv1d = AllocAndUpload(lw.SsmConv1dWeight, (nuint)convBytes, allocs);
+
+                nint ssmDtBias = UploadFloatArray(lw.SsmDtBias!, allocs);
+                nint ssmA = UploadFloatArray(lw.SsmA!, allocs);
+                nint ssmNormWeight = UploadFloatArray(lw.SsmNormWeight!, allocs);
+
+                nint ssmOut = SkipFp16(lw.SsmOutQuantType) ? 0 : UploadAndDequant(lw.SsmOutWeight, lw.SsmOutQuantType, lw.SsmOutOutputDim, lw.SsmOutInputDim, allocs, kernels, stream);
+                nint ssmOutQuant = UploadQuantized(lw.SsmOutWeight, lw.SsmOutQuantType, lw.SsmOutOutputDim, lw.SsmOutInputDim, allocs);
+
+                layers[i] = HipLayerWeights.CreateDeltaNet(
+                    lw.DeltaNetIndex,
+                    qkv, lw.QkvOutputDim, lw.QkvInputDim, qkvQuant, lw.QkvQuantType,
+                    ssmGate, lw.SsmGateOutputDim, lw.SsmGateInputDim, ssmGateQuant, lw.SsmGateQuantType,
+                    ssmBeta, lw.SsmBetaOutputDim, lw.SsmBetaInputDim, ssmBetaQuant, lw.SsmBetaQuantType,
+                    ssmAlpha, lw.SsmAlphaOutputDim, lw.SsmAlphaInputDim, ssmAlphaQuant, lw.SsmAlphaQuantType,
+                    ssmConv1d, ssmDtBias, ssmA, ssmNormWeight,
+                    ssmOut, lw.SsmOutOutputDim, lw.SsmOutInputDim, ssmOutQuant, lw.SsmOutQuantType,
+                    gate, lw.GateOutputDim, lw.GateInputDim, gateQuant, lw.GateQuantType,
+                    up, lw.UpOutputDim, lw.UpInputDim, upQuant, lw.UpQuantType,
+                    down, lw.DownOutputDim, lw.DownInputDim, downQuant, lw.DownQuantType,
+                    attnNorm, ffnNorm,
+                    gateBias, upBias, downBias);
+            }
+            else
+            {
+                nint q = SkipFp16(lw.QQuantType) ? 0 : UploadAndDequant(lw.QWeight, lw.QQuantType, lw.QOutputDim, lw.QInputDim, allocs, kernels, stream);
+                nint k = SkipFp16(lw.KQuantType) ? 0 : UploadAndDequant(lw.KWeight, lw.KQuantType, lw.KOutputDim, lw.KInputDim, allocs, kernels, stream);
+                nint v = SkipFp16(lw.VQuantType) ? 0 : UploadAndDequant(lw.VWeight, lw.VQuantType, lw.VOutputDim, lw.VInputDim, allocs, kernels, stream);
+                nint o = SkipFp16(lw.OQuantType) ? 0 : UploadAndDequant(lw.OWeight, lw.OQuantType, lw.OOutputDim, lw.OInputDim, allocs, kernels, stream);
+
+                nint qQuant = UploadQuantized(lw.QWeight, lw.QQuantType, lw.QOutputDim, lw.QInputDim, allocs);
+                nint kQuant = UploadQuantized(lw.KWeight, lw.KQuantType, lw.KOutputDim, lw.KInputDim, allocs);
+                nint vQuant = UploadQuantized(lw.VWeight, lw.VQuantType, lw.VOutputDim, lw.VInputDim, allocs);
+                nint oQuant = UploadQuantized(lw.OWeight, lw.OQuantType, lw.OOutputDim, lw.OInputDim, allocs);
+
+                nint qNorm = lw.QNormWeight is not null ? UploadNormWeight(lw.QNormWeight, allocs) : 0;
+                nint kNorm = lw.KNormWeight is not null ? UploadNormWeight(lw.KNormWeight, allocs) : 0;
+
+                nint qBias = UploadBias(lw.QBias, allocs);
+                nint kBias = UploadBias(lw.KBias, allocs);
+                nint vBias = UploadBias(lw.VBias, allocs);
+                nint oBias = UploadBias(lw.OBias, allocs);
+
+                layers[i] = new HipLayerWeights(
+                    q, lw.QOutputDim, lw.QInputDim, k, lw.KOutputDim, lw.KInputDim,
+                    v, lw.VOutputDim, lw.VInputDim, o, lw.OOutputDim, lw.OInputDim,
+                    gate, lw.GateOutputDim, lw.GateInputDim, up, lw.UpOutputDim, lw.UpInputDim,
+                    down, lw.DownOutputDim, lw.DownInputDim,
+                    attnNorm, ffnNorm, qNorm, kNorm,
+                    qBias, kBias, vBias, oBias, gateBias, upBias, downBias,
+                    qQuant, lw.QQuantType, kQuant, lw.KQuantType,
+                    vQuant, lw.VQuantType, oQuant, lw.OQuantType,
+                    gateQuant, lw.GateQuantType, upQuant, lw.UpQuantType,
+                    downQuant, lw.DownQuantType);
+            }
         }
 
         // Sync stream
@@ -322,6 +472,21 @@ internal sealed class HipWeights : IDisposable
         }
 
         return devF16;
+    }
+
+    /// <summary>Upload float[] directly as FP32 on device.</summary>
+    private static unsafe nint UploadFloatArray(float[] data, List<nint> allocs)
+    {
+        nuint bytes = (nuint)((long)data.Length * sizeof(float));
+        HipApi.hipMalloc(out nint devF32, bytes).ThrowOnError();
+        allocs.Add(devF32);
+
+        fixed (float* ptr = data)
+        {
+            HipApi.hipMemcpy(devF32, (nint)ptr, bytes, HipApi.hipMemcpyHostToDevice).ThrowOnError();
+        }
+
+        return devF32;
     }
 
     /// <summary>Upload optional float[] bias as FP16 on device. Returns 0 if bias is null.</summary>

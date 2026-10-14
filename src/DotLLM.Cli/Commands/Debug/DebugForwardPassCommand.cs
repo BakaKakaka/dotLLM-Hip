@@ -2,6 +2,7 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using DotLLM.Cli.Commands;
+using DotLLM.Core.Models;
 using DotLLM.Models.Architectures;
 using DotLLM.Models.Gguf;
 using Spectre.Console;
@@ -24,6 +25,14 @@ internal sealed class DebugForwardPassCommand : Command<DebugForwardPassCommand.
         [CommandOption("--prompt|-p")]
         [Description("Input text (default: BOS token only).")]
         public string? Prompt { get; set; }
+
+        [CommandOption("--device|-d")]
+        [Description("Compute device: 'cpu' (default), 'hip', 'hip:gfx1100', 'hip:gfx1201'.")]
+        public string Device { get; set; } = "cpu";
+
+        [CommandOption("--max-layers")]
+        [Description("Debug: limit number of layers processed (0 = all, -1 = skip all).")]
+        public int MaxLayers { get; set; } = 0;
     }
 
     public override int Execute(CommandContext context, Settings settings)
@@ -35,7 +44,15 @@ internal sealed class DebugForwardPassCommand : Command<DebugForwardPassCommand.
         using var gguf = GgufFile.Open(resolvedPath);
         var config = GgufModelConfigExtractor.Extract(gguf.Metadata);
         var tokenizer = GgufBpeTokenizerFactory.Load(gguf.Metadata);
-        using var model = TransformerModel.LoadFromGguf(gguf, config);
+        using IModel model = settings.Device.StartsWith("hip", StringComparison.OrdinalIgnoreCase)
+            ? DotLLM.Hip.HipTransformerModel.LoadFromGguf(gguf, config, settings.Device)
+            : TransformerModel.LoadFromGguf(gguf, config);
+
+        if (model is DotLLM.Hip.HipTransformerModel hipModel && settings.MaxLayers != 0)
+        {
+            hipModel.DebugMaxLayers = settings.MaxLayers;
+        }
+
 
         // Model config summary
         AnsiConsole.Write(new Rule("[bold yellow]Model Config[/]").LeftJustified());

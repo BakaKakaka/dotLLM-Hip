@@ -29,6 +29,7 @@ public sealed unsafe class HipKernels : IDisposable
     private readonly HipModule _fusedQkvGemvModule;
     private readonly HipModule _quantizeQ8_1Module;
     private readonly HipModule _mmvqModule;
+    private readonly HipModule _gatedDeltaNetModule;
 
     // Embedding functions
     private readonly nint _embeddingF32F32OutFunc;
@@ -134,6 +135,16 @@ public sealed unsafe class HipKernels : IDisposable
     private readonly nint _mmvqGemvQ8_0Fdot2Func;
     private readonly nint _mmvqGemvQ4_KFunc;
     private readonly nint _mmvqGemvQ6_KFunc;
+
+    // Gated DeltaNet & Attention Gating
+    private readonly nint _causalConv1dSiLuFunc;
+    private readonly nint _l2NormAndGqaRepeatFunc;
+    private readonly nint _computeSsmGatesFunc;
+    private readonly nint _computeSsmGatesF16Func;
+    private readonly nint _gatedDeltaNetRecurrentFunc;
+    private readonly nint _gatedRmsNormSiLuFunc;
+    private readonly nint _deinterleaveQGateFunc;
+    private readonly nint _mulSigmoidGateFunc;
 
     private bool _disposed;
 
@@ -249,6 +260,16 @@ public sealed unsafe class HipKernels : IDisposable
         _mmvqGemvQ8_0Fdot2Func = _mmvqModule.GetFunction("mmvq_gemv_q8_0_fdot2");
         _mmvqGemvQ4_KFunc = _mmvqModule.GetFunction("mmvq_gemv_q4_k");
         _mmvqGemvQ6_KFunc = _mmvqModule.GetFunction("mmvq_gemv_q6_k");
+
+        _gatedDeltaNetModule = HipKernelLoader.LoadEmbeddedModule(arch, "gated_delta_net");
+        _causalConv1dSiLuFunc = _gatedDeltaNetModule.GetFunction("causal_conv1d_silu_f16");
+        _l2NormAndGqaRepeatFunc = _gatedDeltaNetModule.GetFunction("l2_norm_and_gqa_repeat_f16");
+        _computeSsmGatesFunc = _gatedDeltaNetModule.GetFunction("compute_ssm_gates");
+        _computeSsmGatesF16Func = _gatedDeltaNetModule.GetFunction("compute_ssm_gates_f16");
+        _gatedDeltaNetRecurrentFunc = _gatedDeltaNetModule.GetFunction("gated_delta_net_recurrent_f16");
+        _gatedRmsNormSiLuFunc = _gatedDeltaNetModule.GetFunction("gated_rmsnorm_silu_f16");
+        _deinterleaveQGateFunc = _gatedDeltaNetModule.GetFunction("deinterleave_q_gate_f16");
+        _mulSigmoidGateFunc = _gatedDeltaNetModule.GetFunction("mul_sigmoid_gate_f16");
     }
 
     // ─────────────────────── Embedding ───────────────────────
@@ -1072,6 +1093,99 @@ public sealed unsafe class HipKernels : IDisposable
             gridDim, 1, 1, BlockSize, 1, 1, 0, stream, args, null).ThrowOnError();
     }
 
+    // ─────────────────────── Gated DeltaNet & Attention Gating ───────────────────────
+
+    /// <summary>Depthwise 1D causal conv (kernel_size=4) + state update + SiLU activation.</summary>
+    public void LaunchCausalConv1dSiLu(nint input, nint weights, nint state, nint output, int channels, nint stream)
+    {
+        nint inArg = input, wArg = weights, sArg = state, outArg = output;
+        int cArg = channels;
+        void** args = stackalloc void*[] { &inArg, &wArg, &sArg, &outArg, &cArg };
+        uint gridDim = (uint)((channels + 255) / 256);
+        HipApi.hipModuleLaunchKernel(_causalConv1dSiLuFunc,
+            gridDim, 1, 1, BlockSize, 1, 1, 0, stream, args, null).ThrowOnError();
+    }
+
+    /// <summary>Per-head L2 norm on Q and K, scale Q by 1/sqrt(headDim), and GQA repeat from numKHeads to numVHeads.</summary>
+    public void LaunchL2NormAndGqaRepeat(nint qIn, nint kIn, nint qOut, nint kOut,
+                                         int numKHeads, int numVHeads, int headDim, float eps, nint stream)
+    {
+        nint qInArg = qIn, kInArg = kIn, qOutArg = qOut, kOutArg = kOut;
+        int nkArg = numKHeads, nvArg = numVHeads, hdArg = headDim;
+        float epsArg = eps;
+        void** args = stackalloc void*[] { &qInArg, &kInArg, &qOutArg, &kOutArg, &nkArg, &nvArg, &hdArg, &epsArg };
+        HipApi.hipModuleLaunchKernel(_l2NormAndGqaRepeatFunc,
+            (uint)numKHeads, 1, 1, 128, 1, 1, 0, stream, args, null).ThrowOnError();
+    }
+
+    /// <summary>Computes SSM recurrence gates beta = sigmoid(beta_raw) and g = exp(ssm_a * softplus(alpha_raw + dt_bias)).</summary>
+    public void LaunchComputeSsmGates(nint betaRaw, nint alphaRaw, nint ssmA, nint ssmDtBias,
+                                      nint betaOut, nint gOut, int numVHeads, nint stream)
+    {
+        nint bRawArg = betaRaw, aRawArg = alphaRaw, aArg = ssmA, dtArg = ssmDtBias;
+        nint bOutArg = betaOut, gOutArg = gOut;
+        int nvArg = numVHeads;
+        void** args = stackalloc void*[] { &bRawArg, &aRawArg, &aArg, &dtArg, &bOutArg, &gOutArg, &nvArg };
+        HipApi.hipModuleLaunchKernel(_computeSsmGatesFunc,
+            1, 1, 1, (uint)numVHeads, 1, 1, 0, stream, args, null).ThrowOnError();
+    }
+
+    /// <summary>Computes SSM recurrence gates from FP16 inputs: beta = sigmoid(beta_raw) and g = exp(ssm_a * softplus(alpha_raw + dt_bias)).</summary>
+    public void LaunchComputeSsmGatesF16(nint betaRaw, nint alphaRaw, nint ssmA, nint ssmDtBias,
+                                         nint betaOut, nint gOut, int numVHeads, nint stream)
+    {
+        nint bRawArg = betaRaw, aRawArg = alphaRaw, aArg = ssmA, dtArg = ssmDtBias;
+        nint bOutArg = betaOut, gOutArg = gOut;
+        int nvArg = numVHeads;
+        void** args = stackalloc void*[] { &bRawArg, &aRawArg, &aArg, &dtArg, &bOutArg, &gOutArg, &nvArg };
+        HipApi.hipModuleLaunchKernel(_computeSsmGatesF16Func,
+            1, 1, 1, (uint)numVHeads, 1, 1, 0, stream, args, null).ThrowOnError();
+    }
+
+    /// <summary>Recurrent Delta Rule single token step with 128 threads per head owning column j of state.</summary>
+    public void LaunchGatedDeltaNetRecurrent(nint q, nint k, nint v, nint beta, nint g,
+                                            nint state, nint output, int numVHeads, int headKDim, int headVDim, nint stream)
+    {
+        nint qArg = q, kArg = k, vArg = v, bArg = beta, gArg = g, sArg = state, outArg = output;
+        int nvArg = numVHeads, hkArg = headKDim, hvArg = headVDim;
+        void** args = stackalloc void*[] { &qArg, &kArg, &vArg, &bArg, &gArg, &sArg, &outArg, &nvArg, &hkArg, &hvArg };
+        HipApi.hipModuleLaunchKernel(_gatedDeltaNetRecurrentFunc,
+            (uint)numVHeads, 1, 1, 128, 1, 1, 0, stream, args, null).ThrowOnError();
+    }
+
+    /// <summary>Gated RMSNorm + SiLU across head_v_dim: y = RMSNorm(o, norm_weight) * SiLU(z).</summary>
+    public void LaunchGatedRmsNormSiLu(nint o, nint z, nint normWeight, nint output,
+                                       int numVHeads, int headVDim, float eps, nint stream)
+    {
+        nint oArg = o, zArg = z, wArg = normWeight, outArg = output;
+        int nvArg = numVHeads, hvArg = headVDim;
+        float epsArg = eps;
+        void** args = stackalloc void*[] { &oArg, &zArg, &wArg, &outArg, &nvArg, &hvArg, &epsArg };
+        HipApi.hipModuleLaunchKernel(_gatedRmsNormSiLuFunc,
+            (uint)numVHeads, 1, 1, 128, 1, 1, 0, stream, args, null).ThrowOnError();
+    }
+
+    /// <summary>De-interleaves 2x Q projection output into Q and Gate.</summary>
+    public void LaunchDeinterleaveQGate(nint qg, nint q, nint gate, int numHeads, int headDim, nint stream)
+    {
+        nint qgArg = qg, qArg = q, gArg = gate;
+        int nhArg = numHeads, hdArg = headDim;
+        void** args = stackalloc void*[] { &qgArg, &qArg, &gArg, &nhArg, &hdArg };
+        HipApi.hipModuleLaunchKernel(_deinterleaveQGateFunc,
+            (uint)numHeads, 1, 1, (uint)headDim, 1, 1, 0, stream, args, null).ThrowOnError();
+    }
+
+    /// <summary>Multiplies attention output by sigmoid(gate) element-wise.</summary>
+    public void LaunchMulSigmoidGate(nint attnOut, nint gate, int totalElements, nint stream)
+    {
+        nint aArg = attnOut, gArg = gate;
+        int totArg = totalElements;
+        void** args = stackalloc void*[] { &aArg, &gArg, &totArg };
+        uint gridDim = (uint)((totalElements + 255) / 256);
+        HipApi.hipModuleLaunchKernel(_mulSigmoidGateFunc,
+            gridDim, 1, 1, BlockSize, 1, 1, 0, stream, args, null).ThrowOnError();
+    }
+
     /// <summary>Disposes all loaded HIP kernel modules.</summary>
     public void Dispose()
     {
@@ -1095,5 +1209,6 @@ public sealed unsafe class HipKernels : IDisposable
         _fusedQkvGemvModule.Dispose();
         _quantizeQ8_1Module.Dispose();
         _mmvqModule.Dispose();
+        _gatedDeltaNetModule.Dispose();
     }
 }

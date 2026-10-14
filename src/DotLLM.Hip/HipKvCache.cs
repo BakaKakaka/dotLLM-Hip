@@ -26,9 +26,10 @@ public sealed class HipKvCache : IKvCache
     public int MaxLength => _maxSeqLen;
 
     /// <summary>
-    /// Allocates GPU KV-cache buffers for all layers.
+    /// Allocates GPU KV-cache buffers for layers. When <paramref name="fullAttentionInterval"/> is greater than 0,
+    /// non-attention layers (e.g. DeltaNet layers in hybrid architectures) do not allocate KV buffers.
     /// </summary>
-    public HipKvCache(int numLayers, int numKvHeads, int headDim, int maxSeqLen)
+    public HipKvCache(int numLayers, int numKvHeads, int headDim, int maxSeqLen, int fullAttentionInterval = 0)
     {
         _numLayers = numLayers;
         _kvStride = numKvHeads * headDim;
@@ -39,6 +40,12 @@ public sealed class HipKvCache : IKvCache
         nuint bytesPerLayer = (nuint)((long)maxSeqLen * _kvStride * Fp16Bytes);
         for (int i = 0; i < numLayers; i++)
         {
+            if (fullAttentionInterval > 0 && (i + 1) % fullAttentionInterval != 0)
+            {
+                _keys[i] = 0;
+                _values[i] = 0;
+                continue;
+            }
             HipApi.hipMalloc(out _keys[i], bytesPerLayer).ThrowOnError();
             HipApi.hipMalloc(out _values[i], bytesPerLayer).ThrowOnError();
         }
