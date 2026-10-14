@@ -355,7 +355,7 @@ public sealed unsafe class DequantizeTests
     {
         float[] dest = new float[32];
         Assert.Throws<ArgumentOutOfRangeException>(() =>
-            Dequantize.ToFloat32(nint.Zero, 32, QuantizationType.Q4_0, dest));
+            Dequantize.ToFloat32(nint.Zero, 32, (QuantizationType)999, dest));
     }
 
     [Fact]

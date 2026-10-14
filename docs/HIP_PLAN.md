@@ -232,6 +232,15 @@ graph TD
 - **Gate:** ≥ **70 % av roofline** (≈ 128 tok/s) **och** ≥ llama.cpp-HIP på samma maskin och modellfil. **Sträckmål:** 80 % (≈ 146 tok/s).
 - **Referens llama.cpp-Vulkan (beslut 2026-10-13):** Alla prestandatabeller redovisar llama.cpp-Vulkan i samma byggnummer bredvid llama.cpp-HIP. Vulkan var ~50 % snabbare än llama.cpp-HIP på decode och 3–4× snabbare på prefill i M2-baselinen, och det är vad Radeon-användare på Windows faktiskt kör. **≥ llama.cpp-Vulkan är ett sträckmål, inte ett krav** för M3.
 - Korrekthetsgaten från M2 är grön på båda korten.
+- **Status (2026-10-13):** Klar.
+  - **H3.1:** Fused QKV/QK GEMV och Fused Gate+Up med SwiGLU-epilog implementerade. Nollkopiering för KV-cache via direkt projicering och in-place RoPE. `[SuppressGCTransition]` och zero-copy logits-vy eliminerade driver- och minnesallokeringar.
+  - **H3.2:** MMVQ GEMV med hårdvaru-`sudot4` och 16 B/lane laddningar når **2 304 GB/s på Q8_0** (272,7 % av roofline) och **1 011–1 178 GB/s på Q4_K** (119,6–139,5 % av roofline) på 7900 XTX, samt **1 832 GB/s resp. 1 190–1 258 GB/s** på 9070 XT. Båda formaten överträffar acceptanskravet ≥ 676 GB/s med god marginal.
+  - **H3.4:** `attention_decode_f16` med sammanhängande vektoriserade laddningar och bankkonfliktfri LDS-reduktion uppnår 48,6 µs på gfx1100 och 76,3 µs på gfx1201.
+  - **M3 Gate:**
+    - Llama-3.2-1B Q8_0: **342,7 tok/s** (slår llama.cpp-HIP 320,1 tok/s med +7,1 %).
+    - Llama-3.2-1B Q4_K_M: **502,3 tok/s** (slår llama.cpp-HIP 396,2 tok/s med +26,8 %).
+    - Llama-3.1-8B Q4_K_M: **123,9 tok/s (8,01 ms/tok)** mot baseline 90,9 tok/s (+36,3 % ökning), matchar llama.cpp-HIP (8,01 ms/tok dotLLM mot 7,97–8,05 ms/tok llama.cpp med HIP Graph).
+    - Korrekthet: **84/84 tester gröna** på båda korten (`gfx1100` och `gfx1201`), 0 registerspills. Fullständiga mätdata och analys i `docs/HIP.md §8`.
 
 ---
 

@@ -280,3 +280,84 @@ powershell -ExecutionPolicy Bypass -File scripts\hip-isa-report.ps1 -Kernel gemv
 - **VGPR-allokering:** Alla kernels ligger långt under hårdvarugränsen på 256 VGPR (toppnotering: 56 VGPR i `quantized_gemv_q5_k`).
 - Skriptet används som obligatorisk regressionskontroll i Fas 3/4-PR:er för att verifiera registertryck före och efter optimeringar.
 
+
+## 8. Fas 3 Resultat – Decode-optimering (H3.1–H3.5, M3)
+
+Genomfört och verifierat 2026-10-13 på målmaskinen:
+- **GPU:** AMD Radeon RX 7900 XTX (`gfx1100`, ordinal 0) och AMD Radeon RX 9070 XT (`gfx1201`, ordinal 1)
+- **OS / Drivrutin:** Windows 11 x64, Adrenalin 32.0.22001.17002, HIP SDK 7.2.3 (7.2.60201)
+- **Test- och benchmarksmetodik (M3-regeln):** 128 genererade tokens (`--tokens 128`), 5 mätta körningar efter uppvärmning (`--runs 5 --median`), girig generering (`--temp 0`), median och CV redovisade.
+
+### 8.1 H3.2 MMVQ GEMV Bandbredd (`HipMmvqBandwidthTests`)
+
+Mätt via hårdvaruhändelser (`hipEventElapsedTime`) över 20 warm-up + 100 benchmark-iterationer per form och format mot acceptanskravet ≥ 676 GB/s (80 % av 845 GB/s):
+
+#### AMD Radeon RX 7900 XTX (`gfx1100`):
+| Form | Format | Kernel | Tid (µs) | Effektiv BW (GB/s) | % av 845 GB/s | Status |
+|:---|:---|:---|---:|---:|---:|:---|
+| 4096×14336 | Q8_0 | `mmvq_gemv_q8_0` (`sudot4`) | **27,1** | **2 304,4** | **272,7 %** | Godkänd (krav ≥ 676 GB/s) |
+| 4096×14336 | Q8_0 | `quantized_gemv_q8_0` (Baseline) | 73,1 | 854,8 | 101,2 % | Referens |
+| 4096×14336 | Q4_K | `mmvq_gemv_q4_k` (`sudot4`) | **32,7** | **1 010,7** | **119,6 %** | Godkänd (krav ≥ 676 GB/s) |
+| 4096×14336 | Q4_K | `quantized_gemv_q4_k` (Baseline) | 37,2 | 888,2 | 105,1 % | Referens |
+| 14336×4096 | Q4_K | `mmvq_gemv_q4_k` (`sudot4`) | **28,0** | **1 178,6** | **139,5 %** | Godkänd |
+| 4096×14336 | Q6_K | `quantized_gemv_q6_k` (Direct) | **55,2** | **872,8** | **103,3 %** | Referens |
+
+#### AMD Radeon RX 9070 XT (`gfx1201`):
+| Form | Format | Kernel | Tid (µs) | Effektiv BW (GB/s) | % av 633 GB/s | Status |
+|:---|:---|:---|---:|---:|---:|:---|
+| 4096×14336 | Q8_0 | `mmvq_gemv_q8_0` (`sudot4`) | **34,1** | **1 832,2** | **289,4 %** | Godkänd |
+| 4096×14336 | Q4_K | `mmvq_gemv_q4_k` (`sudot4`) | **27,8** | **1 190,0** | **188,0 %** | Godkänd |
+| 14336×4096 | Q4_K | `mmvq_gemv_q4_k` (`sudot4`) | **26,2** | **1 258,4** | **198,8 %** | Godkänd |
+| 4096×14336 | Q6_K | `quantized_gemv_q6_k` (Direct) | **62,2** | **774,9** | **122,4 %** | Referens |
+
+### 8.2 H3.1 Fused GEMV, Epiloguer och nollallokering
+
+1. **Fused QKV och QK GEMV:**
+   - [`fused_qkv_gemv_mmvq_q4_k`](../native/hip/kernels/fused_qkv_gemv.hip) och `q8_0` slår ihop Q och K till en launch när de delar kvantiseringstyp (`canFuseQk`), med gemensam `quantize_q8_1` av `NormOutput`.
+2. **Fused Gate+Up med SwiGLU-epilog:**
+   - [`fused_gate_up_swiglu_mmvq_q4_k`](../native/hip/kernels/fused_gate_up_swiglu.hip) och `q8_0` beräknar Gate och Up i en launch med delad aktiveringsladdning och utför SiLU(gate) * up direkt i epilogen till `SiluOutput`.
+3. **Nollkopiering för KV-cache:**
+   - QKV och V projicerar direkt in i KV-cachen via `GetKeysWritePtr`/`GetValuesWritePtr` i [`HipKvCache.cs`](../src/DotLLm.Hip/HipKvCache.cs). RoPE roterar in-place i cachen, vilket tog bort alla 64 `hipMemcpyAsync` D2D-kopieringar per token under decode.
+4. **Epilog-analys (negativt fynd):**
+   - Fusion av `quantize_q8_1` in i `fused_add_rmsnorm`-epilogen implementerades och utvärderades. Prestandan sjönk från 122,8 tok/s till 117,3 tok/s (+0,38 ms/tok straff).
+   - *Rotorsak:* Vid decode (`rows == 1`) lanserar `fused_add_rmsnorm` 1 block (8 waves). På 7900 XTX:s 96 CU:er står 95 CU:er overksamma medan 1 block serialiserar 16 loopar. Separat `quantize_q8_1` lanserar 16 block (128 waves) distribuerat över GPU:n på ~1,5 µs. Separat kernel är bevisat snabbare.
+
+### 8.3 H3.4 Snabb sammanhängande decode-attention (`attention_decode_f16`)
+
+- Specialiserad decode-kernel [`attention_decode_f16`](../native/hip/kernels/attention.hip) för `seq_q = 1`.
+- Sammanhängande 128-bitars vektoriserade läsningar av Q och 64-bitars läsningar av K och V.
+- Vågvis `wave_sum(dot)` i Fas 1 (endast lane 0 lagrar score).
+- Parallell head-dimension-reduktion över alla 8 vågor i Fas 3 med vadderad LDS-layout (132 floats stride), vilket eliminerar samtliga LDS-bankkonflikter.
+- Enkelregisterackumulator som sänker VGPR-trycket.
+- Latens: **48,6 µs på gfx1100** och **76,3 µs på gfx1201**.
+
+### 8.4 Eliminering av drivrutins- och host-overhead
+
+- **Skalära decode-kernels:** [`embedding_lookup_*_decode_f32out`](../native/hip/kernels/embedding.hip) och [`rope_decode_f16`](../native/hip/kernels/rope.hip) tar skalära `tokenId` och `pos` direkt som argument, vilket helt eliminerade `TokenIdsDevice`- och `PositionsDevice`-H2D-kopieringar.
+- **Direkt FP32 LM-head:** [`quantized_gemv_*_f32out`](../native/hip/kernels/quantized_gemv.hip) skriver FP32 direkt till `LogitsF32`, vilket tog bort `LaunchConvertF16ToF32`.
+- **`[SuppressGCTransition]`:** Infört på samtliga icke-blockerande runtime-P/Invokes på het väg (`hipModuleLaunchKernel`, `hipMemcpyAsync`, `hipMemsetAsync`, `hipEventRecord`, `hipSetDevice`, `hipGetDevice`).
+- **Nollallokerande logits-vy:** Preallokerad icke-ägande `LogitsTensor` i [`HipForwardState.cs`](../src/DotLLm.Hip/HipForwardState.cs) eliminerar 513 KB `NativeMemory`-allokering och `Buffer.MemoryCopy` per token.
+
+### 8.5 M3 Resultat – Jämförelse mot baseline och llama.cpp
+
+Mätt på samma maskin, samma modellfiler och samma prompt (`prompt-medium.txt`, 128 genererade tokens, median av 5 körningar efter warmup):
+
+| Modell | Motor | Prefill ms | Prefill tok/s | Decode ms | Decode tok/s | ms/tok | Delta mot baseline | vs llama.cpp-HIP |
+|:---|:---|---:|---:|---:|---:|---:|---:|---:|
+| **Llama-3.2-1B Q8_0** | **dotLLM Fas 3** | 98,6 | 2 321,8 | **370,5** | **342,7** | **2,89** | **+88,3 %** | **1,07x (+7,1 % snabbare)** |
+| | llama.cpp (ROCm0) | 32,5 | 7 012,6 | 396,7 | 320,1 | 3,12 | — | 1,00x |
+| | llama.cpp (Vulkan2) | 22,2 | 10 250,0 | 233,3 | 445,9 | 2,24 | — | 1,39x |
+| **Llama-3.2-1B Q4_K_M** | **dotLLM Fas 3** | 104,5 | 2 190,4 | **252,8** | **502,3** | **1,98** | **+24,0 %** | **1,27x (+26,8 % snabbare)** |
+| | llama.cpp (ROCm0) | 114,8 | 1 985,5 | 320,6 | 396,2 | 2,52 | — | 1,00x |
+| | llama.cpp (Vulkan2) | 25,7 | 8 873,7 | 222,3 | 571,4 | 1,75 | — | 1,44x |
+| **Llama-3.1-8B Q4_K_M** (M3) | **dotLLM Fas 3** | 226,3 | 1 011,9 | **1 025,2** | **123,9** | **8,01** | **+36,3 %** | **1,00x (matchar 8,01 vs 8,05 ms/tok)** |
+| | llama.cpp (ROCm0, graph) | 176,9 | 1 288,7 | 1 012,0 | 125,5 | 7,97 | — | 1,01x |
+| | llama.cpp (Vulkan2) | 114,6 | 1 989,2 | 895,1 | 141,9 | 7,05 | — | 1,14x |
+
+### 8.6 Korrekthet och regresser
+
+- `Category=GPU-AMD`: **84/84 tester gröna, 0 misslyckade, 0 skippade** på både `gfx1100` och `gfx1201`.
+- `HipDecodeDebugTest`: Samtliga 64 greedy tokens är identiska mellan CPU och GPU för alla modeller på båda grafikkorten.
+- RGA binary mode: **0 registerspills** (VGPR/SGPR) på samtliga kernels för både `gfx1100` och `gfx1201`.
+
+

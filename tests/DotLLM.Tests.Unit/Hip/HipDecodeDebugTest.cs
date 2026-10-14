@@ -107,6 +107,8 @@ public class HipDecodeDebugTest
         RunDecodeComparison(modelPath, "The capital of France is", 64);
     }
 
+
+
     private unsafe void ProbeLayer0(string modelPath, string prompt)
     {
         var device = HipDevice.GetSupportedDevices()[0];

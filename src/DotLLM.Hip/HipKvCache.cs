@@ -102,6 +102,21 @@ public sealed class HipKvCache : IKvCache
     /// <summary>Returns device pointer to cached values for the given layer.</summary>
     internal nint GetValuesPtr(int layerIndex) => _values[layerIndex];
 
+    /// <summary>Returns direct device write pointer for cached keys at the given layer and position.</summary>
+    internal unsafe nint GetKeysWritePtr(int layerIndex, int position) =>
+        _keys[layerIndex] + (nint)(position * _kvStride * sizeof(Half));
+
+    /// <summary>Returns direct device write pointer for cached values at the given layer and position.</summary>
+    internal unsafe nint GetValuesWritePtr(int layerIndex, int position) =>
+        _values[layerIndex] + (nint)(position * _kvStride * sizeof(Half));
+
+    /// <summary>Advances the cache length to include the written position without copying.</summary>
+    internal void AdvancePosition(int position)
+    {
+        if (position + 1 > _currentLength)
+            _currentLength = position + 1;
+    }
+
     // ── IKvCache interface implementation ─────────────────────────────
 
     /// <inheritdoc/>

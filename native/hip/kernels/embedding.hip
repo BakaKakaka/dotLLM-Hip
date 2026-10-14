@@ -69,3 +69,50 @@ embedding_lookup_q8_0_f32out(
             out_row[b * Q8_0_BLOCK_SIZE + j] = d * (float)qs[j];
     }
 }
+
+// ── Decode variants (single token_id passed as scalar argument) ─────
+
+extern "C" __global__ void __launch_bounds__(256)
+embedding_lookup_f32_decode_f32out(
+    const float* __restrict__ embed_table,
+    const int token_id,
+    float* __restrict__ output,
+    const int hidden_size)
+{
+    const float* row = embed_table + (size_t)token_id * hidden_size;
+    for (int i = threadIdx.x; i < hidden_size; i += blockDim.x)
+        output[i] = row[i];
+}
+
+extern "C" __global__ void __launch_bounds__(256)
+embedding_lookup_f16_decode_f32out(
+    const __half* __restrict__ embed_table,
+    const int token_id,
+    float* __restrict__ output,
+    const int hidden_size)
+{
+    const __half* row = embed_table + (size_t)token_id * hidden_size;
+    for (int i = threadIdx.x; i < hidden_size; i += blockDim.x)
+        output[i] = to_float(row[i]);
+}
+
+extern "C" __global__ void __launch_bounds__(256)
+embedding_lookup_q8_0_decode_f32out(
+    const uint8_t* __restrict__ embed_table,
+    const int token_id,
+    float* __restrict__ output,
+    const int hidden_size)
+{
+    int blocks_per_row = hidden_size / Q8_0_BLOCK_SIZE;
+    const uint8_t* row = embed_table + (size_t)token_id * blocks_per_row * Q8_0_BLOCK_BYTES;
+
+    for (int b = threadIdx.x; b < blocks_per_row; b += blockDim.x)
+    {
+        const uint8_t* block = row + b * Q8_0_BLOCK_BYTES;
+        float d = to_float(*reinterpret_cast<const __half*>(block));
+        const int8_t* qs = reinterpret_cast<const int8_t*>(block + 2);
+
+        for (int j = 0; j < Q8_0_BLOCK_SIZE; j++)
+            output[b * Q8_0_BLOCK_SIZE + j] = d * (float)qs[j];
+    }
+}
